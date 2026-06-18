@@ -1,8 +1,10 @@
-# AntrophAI prototype rules — v0.41.77
+# AntrophAI prototype rules — v0.41.83
 
 ## Round profile
 
 Current primary profile: Godlike Warfare / GLW.
+
+The static launcher also exposes a browser-local Intro Game slot alongside GLW. Tester access remains remembered locally in this browser only until a future server-side token ledger exists.
 
 - 4x game speed
 - no explore in GLW

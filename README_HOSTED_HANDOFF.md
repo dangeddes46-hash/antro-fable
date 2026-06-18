@@ -1,8 +1,20 @@
-# Hosted handoff notes — AntrophAI v0.41.77
+# Hosted handoff notes — AntrophAI v0.41.83
 
 ## Read this first
 
 The current build is a local single-player GLW prototype. It should not be deployed as real multiplayer by simply publishing the React app.
+
+v0.41.83 keeps the browser-local GLW / Intro Game slot manager. It is still local-only, not real authentication, and saves remain browser-local.
+
+True one-time tester tokens require a server-side redemption record or hosted token ledger. This static build only remembers access locally in one browser.
+
+The v0.41.84 invite-token architecture plan lives in `INVITE_TOKEN_ACCESS_PLAN.md`. Until a hosted token service exists, the current static gate remains the default.
+
+The Phase 2 endpoint contract lives in `INVITE_TOKEN_ENDPOINT_CONTRACT.md`.
+
+The Supabase service skeleton for that future phase now lives in `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/`. It is not wired into the game client yet.
+
+v0.41.84 is token-service infrastructure work, not a game-client integration pass. The current runtime game remains v0.41.83.
 
 For hosted play, the server must become authoritative for:
 
@@ -22,6 +34,7 @@ The React app should be treated as a working reference UI and gameplay reconstru
 ## Current gameplay systems in usable prototype state
 
 - GLW launcher and reset flow
+- browser-local launcher slot manager with multiple GLW slots
 - species selection and local player setup
 - build/train/science basics
 - attacks, revives, land gain and building loss reports
@@ -33,6 +46,7 @@ The React app should be treated as a working reference UI and gameplay reconstru
 - rankings without ID column
 - debug export
 - Signal for Assistance page
+- tester access gate for trusted static testers
 
 ## Deferred systems
 
@@ -73,4 +87,4 @@ Random game outcomes should be resolved server-side or through deterministic see
 
 ## Version
 
-Current handoff version: v0.41.77
+Current handoff version: v0.41.83

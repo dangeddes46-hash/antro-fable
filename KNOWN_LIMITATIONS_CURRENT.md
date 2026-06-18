@@ -1,4 +1,4 @@
-# Known limitations — current v0.41.77 handoff
+# Known limitations — current v0.41.83 handoff
 
 ## Hosted multiplayer not implemented
 
@@ -19,6 +19,18 @@ Some archive, story, race and library art manifests refer to image paths that ar
 ## Admin tools are local prototype tools
 
 Debug/admin buttons are useful for testing, but must be permission-gated and server-validated in a hosted version.
+
+## Tester access gate
+
+v0.41.83 keeps the browser-local GLW / Intro Game slot manager. It is only local UI, not real authentication, and it leaves browser-local saves untouched.
+
+True one-time tester tokens require a server-side redemption record or hosted token ledger. This static build only remembers access locally in one browser.
+
+See `INVITE_TOKEN_ACCESS_PLAN.md` for the v0.41.84 invite-token architecture and rollout phases.
+
+See `INVITE_TOKEN_ENDPOINT_CONTRACT.md` for the Phase 2 hosted redemption contract and ledger shape.
+
+See `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/` for the current Supabase service skeleton. The client is not wired to it yet.
 
 ## Display modes
 

@@ -19,8 +19,14 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.79";
+const PROTOTYPE_VERSION = "v0.41.83";
 const ADMIN_ROUND_SLOT_KEY = "admin-start-local";
+const TESTER_ACCESS_KEY = "antrophaiTesterAccessAccepted";
+const TESTER_ACCESS_ALLOWLIST = {
+  "geddes-test": "geddes-test",
+  "proteus-test": "proteus-test",
+  "picket-test": "picket-test",
+};
 
 const DISPLAY_MODEL_DEFAULT = "hybrid";
 const DISPLAY_MODEL_OPTIONS = {
@@ -56,6 +62,7 @@ const DISPLAY_MODEL_OPTIONS = {
 const ADMIN_ACCESS_PASSWORD = "antrophai";
 const RETRO_WORDING_PASSWORD = "admin1661";
 const GLW_LAUNCHER_SLOT_KEY = makeRoundSlotKey("glw");
+const INTRO_LAUNCHER_SLOT_KEY = makeRoundSlotKey("intro");
 function normaliseDisplayModel(value) {
   return DISPLAY_MODEL_OPTIONS[value] ? value : DISPLAY_MODEL_DEFAULT;
 }
@@ -1193,12 +1200,28 @@ function safeLoadStorageKey(storageKey = SAVE_KEY) { try { if (typeof window ===
 function safeLoadSave() { return safeLoadStorageKey(SAVE_KEY); }
 function safeWriteStorageKey(storageKey, payload) { try { if (typeof window !== "undefined") window.localStorage.setItem(storageKey, JSON.stringify(payload)); } catch {} }
 function safeWriteSave(payload) { safeWriteStorageKey(SAVE_KEY, payload); }
+function safeDeleteStorageKey(storageKey) { try { if (typeof window !== "undefined") window.localStorage.removeItem(storageKey); } catch {} }
 function safeLoadRoundSlot(slotKey) { return safeLoadStorageKey(roundSlotSaveKey(slotKey)); }
 function safeWriteRoundSlot(slotKey, payload) { if (!slotKey) return; safeWriteStorageKey(roundSlotSaveKey(slotKey), payload); }
 function safeReadRoundSlotIndex() { const index = safeLoadStorageKey(ROUND_SLOT_INDEX_KEY); return Array.isArray(index) ? index : []; }
 function safeWriteRoundSlotIndex(index = []) { safeWriteStorageKey(ROUND_SLOT_INDEX_KEY, Array.isArray(index) ? index : []); }
 function upsertRoundSlotIndexEntry(index = [], entry = {}) { const key = entry.slotKey; if (!key) return Array.isArray(index) ? index : []; const without = (Array.isArray(index) ? index : []).filter((item) => item?.slotKey !== key); return [{ ...entry, savedAt: entry.savedAt || Date.now() }, ...without].slice(0, 20); }
 function safeDeleteRoundSlot(slotKey) { try { if (typeof window !== "undefined") window.localStorage.removeItem(roundSlotSaveKey(slotKey)); } catch {} }
+function normaliseTesterAccessRecord(value) {
+  if (!value || typeof value !== "object" || !value.accepted) return null;
+  const codeLabel = typeof value.codeLabel === "string" && value.codeLabel.trim() ? value.codeLabel.trim() : null;
+  const acceptedAt = Number(value.acceptedAt || 0);
+  return { accepted: true, codeLabel, acceptedAt: Number.isFinite(acceptedAt) && acceptedAt > 0 ? acceptedAt : null };
+}
+function safeLoadTesterAccess() { return normaliseTesterAccessRecord(safeLoadStorageKey(TESTER_ACCESS_KEY)); }
+function safeWriteTesterAccess(payload) { safeWriteStorageKey(TESTER_ACCESS_KEY, payload); }
+function safeClearTesterAccess() { try { if (typeof window !== "undefined") window.localStorage.removeItem(TESTER_ACCESS_KEY); } catch {} }
+function testerAccessRecordForCode(code) {
+  const entered = String(code || "").trim().toLowerCase();
+  const codeLabel = TESTER_ACCESS_ALLOWLIST[entered];
+  if (!codeLabel) return null;
+  return { accepted: true, codeLabel, acceptedAt: Date.now() };
+}
 
 function retalWindowMsForSettings(settings) {
   const speed = Math.max(1, Number(settings?.gameSpeed || 1));
@@ -1513,6 +1536,9 @@ function makeGlwLateOpponent(seed, index = 0, now = Date.now()) {
 export default function App() {
   const [page, setPage] = useState("status");
   const [hydrated, setHydrated] = useState(false);
+  const [testerAccessRecord, setTesterAccessRecord] = useState(() => safeLoadTesterAccess());
+  const [testerAccessDraft, setTesterAccessDraft] = useState("");
+  const [testerAccessError, setTesterAccessError] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -1803,27 +1829,63 @@ export default function App() {
     setRetroWordingError("");
     addLog("Hybrid wording restored.", "Display");
   }
-  function resetGlwLauncher(mode = "start") {
-    setGlwSeedMode(mode === "late" ? "late" : "start");
+  function resetGlwLauncher(mode = "start", slotKey = GLW_LAUNCHER_SLOT_KEY, roundKey = "glw") {
+    const requestedRoundKey = accountRounds.some((round) => round.key === roundKey) ? roundKey : "glw";
+    const requestedRound = accountRounds.find((round) => round.key === requestedRoundKey) || accountRounds[0];
+    const profileName = requestedRound?.profileName || (requestedRoundKey === "intro" ? "Intro Game" : "Godlike Warfare");
+    const isLateRound = requestedRoundKey === "glw" && mode === "late";
+    setGlwSeedMode(isLateRound ? "late" : "start");
     setGlwRaceRegistered(false);
     setPlayerNameSetupComplete(false);
     setEntryStage("glw");
-    setSelectedRoundKey("glw");
+    setSelectedRoundKey(requestedRoundKey);
     setSelectedSpeciesKey("lithi");
     setPlayerNameDraft("SONAR");
-    setActiveRoundSlotKey(GLW_LAUNCHER_SLOT_KEY);
+    setActiveRoundSlotKey(slotKey || null);
     setAlliance(null);
     setAllianceShareEnabledMembers([]);
     setActiveWars([]);
     setAlliedStatuses([]);
     setDiplomacyRequests([]);
     setActiveLrcSequence(null);
-    try { if (typeof window !== "undefined") window.localStorage.setItem(ROUND_SLOT_CURRENT_KEY, GLW_LAUNCHER_SLOT_KEY); } catch {}
-    setRoundProfile("Godlike Warfare");
-    setRoundSettings(roundProfiles["Godlike Warfare"]);
-    setGameName(mode === "late" ? "Late War Test Round" : "GLW Test Round");
+    try { if (typeof window !== "undefined") { if (slotKey) window.localStorage.setItem(ROUND_SLOT_CURRENT_KEY, slotKey); else window.localStorage.removeItem(ROUND_SLOT_CURRENT_KEY); } } catch {}
+    setRoundProfile(profileName);
+    setRoundSettings(roundProfiles[profileName] || roundProfiles["Godlike Warfare"]);
+    setGameName(requestedRoundKey === "intro" ? "Intro Game Test Round" : (isLateRound ? "Late War Test Round" : "GLW Test Round"));
     setPage("status");
-    addLog(`${mode === "late" ? "Late-war" : "Start"} GLW reset selected. Choose species to enter.`, "War");
+    addLog(`${requestedRoundKey === "intro" ? "Intro Game" : isLateRound ? "Late-war Godlike Warfare" : "Godlike Warfare"} reset selected. Choose species to enter.`, "War");
+  }
+  function currentLauncherSlotExists() {
+    if (!activeRoundSlotKey) return false;
+    if (safeLoadRoundSlot(activeRoundSlotKey)) return true;
+    if (activeRoundSlotKey === "glw-local" && safeLoadSave()) return true;
+    return liveRoundSlotIndex(roundSlotIndex).some((slot) => slot?.slotKey === activeRoundSlotKey);
+  }
+  function startIntroGameSlot(mode = "start") {
+    if (currentLauncherSlotExists()) saveActiveRoundSlot();
+    resetGlwLauncher(mode, makeRoundSlotKey("intro"), "intro");
+  }
+  function launcherRoundShortLabelForKey(roundKey = "") {
+    if (roundKey === "intro") return "IG";
+    if (roundKey === "glw") return "GLW";
+    if (roundKey === "admin-start") return "ADM";
+    return "Slot";
+  }
+  function launcherRoundNameForKey(roundKey = "") {
+    return defaultRoundSlotLabel(roundKey) || (roundKey === "admin-start" ? "Admin Round" : "Prototype Round");
+  }
+  function launcherRoundTitleForKey(roundKey = "") {
+    return `${launcherRoundShortLabelForKey(roundKey)} — ${launcherRoundNameForKey(roundKey)}`;
+  }
+  function launcherRoundSettingsSummary(roundKey = "", settings = null) {
+    const profileName = roundProfileForKey(roundKey);
+    const resolved = settings || roundProfiles[profileName] || roundSettings || {};
+    return {
+      profileName,
+      gameSpeed: Number(resolved.gameSpeed || 0) || null,
+      exploreEnabled: resolved.exploreEnabled !== false,
+      revives: resolved.revives || null,
+    };
   }
   function chooseDisplayModel(model) {
     const normalised = normaliseDisplayModel(model);
@@ -2137,6 +2199,43 @@ export default function App() {
     if (slotKey === activeRoundSlotKey) setLastUpdateSummary("Reset the active live round autosave. The current in-memory round remains open until you load another slot or reload.");
     else setLastUpdateSummary("Reset live round autosave.");
   }
+  function clearTesterAccess() {
+    safeClearTesterAccess();
+    setTesterAccessRecord(null);
+    setTesterAccessDraft("");
+    setTesterAccessError("");
+  }
+  // TODO: True one-time tester tokens need a server-side redemption record or hosted token ledger. Static-only builds can only remember access locally per browser.
+  function submitTesterAccess() {
+    const record = testerAccessRecordForCode(testerAccessDraft);
+    if (!record) {
+      setTesterAccessError("That access code was not recognised.");
+      return;
+    }
+    safeWriteTesterAccess(record);
+    setTesterAccessRecord(record);
+    setTesterAccessDraft("");
+    setTesterAccessError("");
+  }
+  function renderTesterAccessGate() {
+    return <div className="app-shell wording-modern species-lithi min-h-screen bg-black text-orange-400 font-mono p-3 flex items-center justify-center" style={{ backgroundImage: "radial-gradient(circle at top, #1b1208 0, #030100 38%, #000 100%)" }}>
+      <div className="w-[min(96vw,760px)] border border-orange-800 bg-black/90 p-5 shadow-2xl">
+        <style>{`.app-shell{--antro-bg:#050100;--antro-panel-bg:rgba(0,0,0,.82);--antro-panel-header-bg:#240b02;--antro-border:#9a4b08;--antro-accent:#ffb15c;--species-accent:var(--antro-accent);--species-border:var(--antro-border);--species-glow:rgba(255,120,32,.14)}.wording-modern.species-lithi{--species-accent:#b98536;--species-border:#6d4216;--species-glow:rgba(224,162,74,.16)}.wording-modern .antro-panel{border-color:var(--species-border);box-shadow:0 0 0 1px rgba(0,0,0,.8),0 0 28px var(--species-glow)}.wording-modern .antro-panel-title{border-color:var(--species-border);color:var(--species-accent)}.classic-btn{border:1px solid #9a4b08;background:#160701;color:#ffb15c;padding:4px 8px;font-size:14px}.classic-btn:hover{background:#321004;color:#ffe0b0}.species-art-frame{border-color:var(--species-border);box-shadow:inset 0 0 30px rgba(0,0,0,.35),0 0 20px var(--species-glow)}`}</style>
+        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Tester Access | {PROTOTYPE_VERSION}</p></div>
+        <Panel title="Tester Access">
+          <p className="text-orange-200 mb-4">Enter your private tester access code. This static test build stores access locally in this browser.</p>
+          <div className="max-w-md">
+            <label className="block text-orange-300 mb-1">Access code</label>
+            <input className="w-full bg-black border border-orange-900 text-orange-100 px-2 py-2" value={testerAccessDraft} placeholder="Access code" onChange={(e) => { setTesterAccessDraft(e.target.value); setTesterAccessError(""); }} onKeyDown={(e) => { if (e.key === "Enter") submitTesterAccess(); }} autoFocus />
+            {testerAccessError ? <div className="text-red-300 mt-2">{testerAccessError}</div> : null}
+            <div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={submitTesterAccess}>Enter</button></div>
+            <div className="mt-4 text-xs text-orange-600 leading-relaxed">Tester access is a lightweight invite gate for trusted testers. It is not real authentication.</div>
+          </div>
+        </Panel>
+        <div className="mt-5 pt-3 border-t border-orange-950 text-xs text-orange-700 text-center">Local prototype only. No server account or login is created in this build.</div>
+      </div>
+    </div>;
+  }
 
   useEffect(() => {
     const savedIndex = safeReadRoundSlotIndex();
@@ -2147,7 +2246,17 @@ export default function App() {
     const legacySave = safeLoadSave();
     const saved = slotSave || legacySave;
     setActiveRoundSlotKey(currentSlot);
-    if (saved) { applySavedState(saved); } else { setEntryStage("glw"); setPlayerNameSetupComplete(false); setGlwRaceRegistered(false); setSelectedRoundKey("glw"); setRoundProfile("Godlike Warfare"); setRoundSettings(roundProfiles["Godlike Warfare"]); setGameName("Late War Test Round"); }
+    if (saved) {
+      applySavedState(saved);
+      const isRealLauncherSave = Boolean(saved.playerNameSetupComplete || saved.glwRaceRegistered || saved.entryStage === "game" || (saved.player && cleanStoredName(saved.player.name, "SONAR") !== "SONAR"));
+      if (isRealLauncherSave && !savedIndex.some((slot) => slot?.slotKey === currentSlot)) {
+        const roundKey = canonicalRoundKeyForSlot({ ...saved, slotKey: currentSlot });
+        const entry = { slotKey: currentSlot, label: saved.gameName || defaultRoundSlotLabel(roundKey), roundKey, roundName: saved.gameName || saved.roundProfile || defaultRoundSlotLabel(roundKey), roundStartedAt: saved.roundStartedAt, playerName: cleanStoredName(saved.player?.name, "SONAR"), speciesKey: saved.player?.race || saved.selectedSpeciesKey || "lithi", land: totalEmpireLand(saved.player || {}), power: publicPowerForEmpire(saved.player || {}), version: saved.saveStateVersion || PROTOTYPE_VERSION, savedAt: saved.savedAt || Date.now() };
+        const nextIndex = upsertRoundSlotIndexEntry(savedIndex, entry);
+        setRoundSlotIndex(nextIndex);
+        safeWriteRoundSlotIndex(nextIndex);
+      }
+    } else { setEntryStage("glw"); setPlayerNameSetupComplete(false); setGlwRaceRegistered(false); setSelectedRoundKey("glw"); setRoundProfile("Godlike Warfare"); setRoundSettings(roundProfiles["Godlike Warfare"]); setGameName("Late War Test Round"); }
     setHydrated(true);
   }, []);
 
@@ -3744,12 +3853,26 @@ export default function App() {
         realSecondsPerTick: realSecondsPerTick(),
         lastUpdateSummary
       },
+      testerAccess: {
+        accepted: Boolean(testerAccessRecord?.accepted),
+        codeLabel: testerAccessRecord?.codeLabel || null,
+        acceptedAt: testerAccessRecord?.acceptedAt || null
+      },
       selected: { page, entryStage, selectedRoundKey, selectedSpeciesKey, activeRoundSlotKey, selectedTargetName, battleLogPage, battleLogOpponent, newsFilter, newsPage, onlineSort },
       roundSlots: {
         activeRoundSlotKey,
         currentStorageKey: (() => { try { return typeof window !== "undefined" ? window.localStorage.getItem(ROUND_SLOT_CURRENT_KEY) : null; } catch { return null; } })(),
         index: roundSlotIndex,
         liveIndex: liveRoundSlotIndex(roundSlotIndex)
+      },
+      currentRoundSummary: {
+        version: PROTOTYPE_VERSION,
+        slotKey: activeRoundSlotKey,
+        roundKey: currentRoundKeyFromProfile(),
+        roundShortLabel: launcherRoundShortLabelForKey(currentRoundKeyFromProfile()),
+        roundName: launcherRoundNameForKey(currentRoundKeyFromProfile()),
+        localOnly: true,
+        roundSettingsSummary: launcherRoundSettingsSummary(currentRoundKeyFromProfile(), roundSettings),
       },
       player: { ...debugPlayer, scienceLevels, spies, mercenaries },
       demoOpponents: (demoOpponents || []).map(exportEntityForDebug),
@@ -5208,10 +5331,10 @@ export default function App() {
   function confirmPlayerName() {
     const name = cleanStoredName(playerNameDraft, "");
     if (!name) return addLog("Enter an empire name first.");
-    const requestedRoundKey = "glw";
+    const requestedRoundKey = selectedRoundKey === "intro" ? "intro" : "glw";
     const speciesKey = races[selectedSpeciesKey] ? selectedSpeciesKey : "lithi";
     const speciesName = races[speciesKey]?.name || raceNameFromKey(speciesKey);
-    const slotKey = GLW_LAUNCHER_SLOT_KEY;
+    const slotKey = activeRoundSlotKey || makeRoundSlotKey(requestedRoundKey);
     setActiveRoundSlotKey(slotKey);
     try { if (typeof window !== "undefined") window.localStorage.setItem(ROUND_SLOT_CURRENT_KEY, slotKey); } catch {}
     resetToFreshRound(requestedRoundKey);
@@ -5647,17 +5770,165 @@ export default function App() {
     const selectedDisplayName = selectedChoose.displayName || selectedSpecies.name;
     const shell = (children) => <div className={`app-shell wording-modern species-${selectedSpeciesKey} min-h-screen bg-black text-orange-400 font-mono p-3 flex items-center justify-center`} style={{ backgroundImage: "radial-gradient(circle at top, #1b1208 0, #030100 38%, #000 100%)" }}>
       <div className="w-[min(98vw,1180px)] border border-orange-800 bg-black/90 p-5 shadow-2xl"><style>{`.app-shell{--antro-bg:#050100;--antro-panel-bg:rgba(0,0,0,.82);--antro-panel-header-bg:#240b02;--antro-border:#9a4b08;--antro-accent:#ffb15c;--species-accent:var(--antro-accent);--species-border:var(--antro-border);--species-glow:rgba(255,120,32,.14)}.wording-modern.species-human{--species-accent:#d6a15d;--species-border:#a46b32;--species-glow:rgba(242,192,120,.16)}.wording-modern.species-trysaur{--species-accent:#c05a1a;--species-border:#8c2f0c;--species-glow:rgba(255,92,24,.18)}.wording-modern.species-relu{--species-accent:#8fc6d8;--species-border:#5f8792;--species-glow:rgba(141,210,232,.18)}.wording-modern.species-lithi{--species-accent:#b98536;--species-border:#6d4216;--species-glow:rgba(224,162,74,.16)}.wording-modern.species-zarth{--species-accent:#d77b2a;--species-border:#a9581b;--species-glow:rgba(242,129,45,.2)}.wording-modern .antro-panel{border-color:var(--species-border);box-shadow:0 0 0 1px rgba(0,0,0,.8),0 0 28px var(--species-glow)}.wording-modern .antro-panel-title{border-color:var(--species-border);color:var(--species-accent)}.classic-btn{border:1px solid #9a4b08;background:#160701;color:#ffb15c;padding:4px 8px;font-size:14px}.classic-btn:hover{background:#321004;color:#ffe0b0}.species-select{border-color:var(--species-border);box-shadow:0 0 18px var(--species-glow)}.species-art-frame{border-color:var(--species-border);box-shadow:inset 0 0 30px rgba(0,0,0,.35),0 0 20px var(--species-glow)}`}</style>
-        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Private prototype access · {PROTOTYPE_VERSION}</p></div>
+        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Tester access accepted · {PROTOTYPE_VERSION}</p></div>
         {children}
-        <div className="mt-5 pt-3 border-t border-orange-950 text-xs text-orange-700 text-center">Local prototype only. No live account or server authentication is created in this build.</div>
+        <div className="mt-5 pt-3 border-t border-orange-950 text-xs text-orange-700 text-center">
+          <div>Local prototype only. No server account or login is created in this build.</div>
+          {testerAccessRecord?.accepted ? <button type="button" className="mt-2 text-[11px] text-orange-300 underline decoration-dotted hover:text-orange-100" onClick={clearTesterAccess}>Clear tester access</button> : null}
+        </div>
       </div>
       {renderAdminAccessModal()}
       {renderRetroModeConfirmModal()}
     </div>;
 
+    const isRealLauncherSave = (payload = {}) => Boolean(payload?.playerNameSetupComplete || payload?.glwRaceRegistered || payload?.entryStage === "game" || (payload?.player && cleanStoredName(payload.player.name, "SONAR") !== "SONAR"));
+    const launcherSlotSummary = (slot = {}, payload = null) => {
+      const slotPayload = payload || (slot.storageKey === SAVE_KEY ? safeLoadSave() : safeLoadRoundSlot(slot.slotKey));
+      const playerRecord = slotPayload?.player || {};
+      const roundKey = canonicalRoundKeyForSlot({ ...slot, ...slotPayload, slotKey: slot.slotKey });
+      const roundName = launcherRoundNameForKey(roundKey);
+      const playerName = cleanStoredName(playerRecord.name || slot.playerName || "SONAR", "SONAR");
+      const speciesKey = playerRecord.race || slot.speciesKey || "lithi";
+      const version = slotPayload?.saveStateVersion || slot.version || PROTOTYPE_VERSION;
+      const savedAt = Number(slotPayload?.savedAt || slot.savedAt || Date.now()) || Date.now();
+      const land = slotPayload?.player ? totalEmpireLand(slotPayload.player) : Number(slot.land || 0);
+      const power = slotPayload?.player ? publicPowerForEmpire(slotPayload.player) : Number(slot.power || 0);
+      const savedTitle = slotPayload?.gameName || slotPayload?.roundProfile || slot.roundName || slot.label || roundName;
+      const roundShortLabel = launcherRoundShortLabelForKey(roundKey);
+      const roundTitle = launcherRoundTitleForKey(roundKey);
+      const roundSettingsSummary = launcherRoundSettingsSummary(roundKey, slotPayload?.roundSettings || null);
+      return { ...slot, storageKey: slot.storageKey || roundSlotSaveKey(slot.slotKey), roundKey, roundName, roundTitle, roundShortLabel, savedTitle, label: slot.label || roundTitle, playerName, speciesKey, version, savedAt, land, power, localOnly: true, roundSettingsSummary, payload: slotPayload };
+    };
+    const launcherSlots = (() => {
+      const slots = liveRoundSlotIndex(roundSlotIndex)
+        .filter((slot) => {
+          const roundKey = canonicalRoundKeyForSlot(slot);
+          return roundKey === "glw" || roundKey === "intro";
+        })
+        .map((slot) => launcherSlotSummary(slot, safeLoadRoundSlot(slot.slotKey)))
+        .filter(Boolean);
+      const currentPayload = activeRoundSlotKey ? safeLoadRoundSlot(activeRoundSlotKey) : null;
+      const legacyPayload = !currentPayload && activeRoundSlotKey ? safeLoadSave() : null;
+      const fallbackPayload = currentPayload || legacyPayload;
+      if (fallbackPayload && isRealLauncherSave(fallbackPayload) && !slots.some((slot) => slot.slotKey === activeRoundSlotKey)) {
+        const fallbackRoundKey = canonicalRoundKeyForSlot({ ...fallbackPayload, slotKey: activeRoundSlotKey });
+        slots.unshift(launcherSlotSummary({
+          slotKey: activeRoundSlotKey,
+          label: fallbackPayload.gameName || fallbackPayload.roundProfile || defaultRoundSlotLabel(fallbackRoundKey),
+          roundKey: fallbackRoundKey,
+          roundName: fallbackPayload.gameName || fallbackPayload.roundProfile || defaultRoundSlotLabel(fallbackRoundKey),
+          playerName: cleanStoredName(fallbackPayload.player?.name || "SONAR", "SONAR"),
+          speciesKey: fallbackPayload.player?.race || fallbackPayload.selectedSpeciesKey || "lithi",
+          version: fallbackPayload.saveStateVersion || PROTOTYPE_VERSION,
+          savedAt: fallbackPayload.savedAt || Date.now(),
+          storageKey: roundSlotSaveKey(activeRoundSlotKey)
+        }, fallbackPayload));
+      }
+      return slots.sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0));
+    })();
+    const exportLauncherSlotDebug = (slot = {}) => {
+      const slotPayload = safeLoadRoundSlot(slot.slotKey) || {};
+      const payload = currentDebugExportPayload(`Launcher slot export: ${launcherRoundTitleForKey(canonicalRoundKeyForSlot(slot))}`);
+      const now = Date.now();
+      const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
+      const slotSummary = launcherSlotSummary(slot, slotPayload);
+      const filename = `antrophai_debug_${PROTOTYPE_VERSION}_slot_${slotSummary.slotKey}_${stamp}.json`;
+      payload.generatedAt = now;
+      payload.generatedAtIso = new Date(now).toISOString();
+      payload.testerComment = `Launcher slot export: ${slotSummary.roundTitle}`;
+      payload.selected = { ...payload.selected, page: "status", entryStage: "glw", selectedRoundKey: slotSummary.roundKey, selectedSpeciesKey: slotSummary.speciesKey, activeRoundSlotKey: slotSummary.slotKey };
+      payload.roundSlots = { ...payload.roundSlots, activeRoundSlotKey: slotSummary.slotKey, currentStorageKey: slotSummary.storageKey, launcherSlot: slotSummary };
+      payload.exportSummary = { version: PROTOTYPE_VERSION, slotKey: slotSummary.slotKey, roundKey: slotSummary.roundKey, roundShortLabel: slotSummary.roundShortLabel, roundName: slotSummary.roundName, savedTitle: slotSummary.savedTitle, localOnly: true, roundSettingsSummary: slotSummary.roundSettingsSummary };
+      payload.savePayload = slotPayload;
+      payload.slotContext = slotSummary;
+      try {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (err) {
+        console.warn("Debug export download failed", err);
+      }
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        const json = JSON.stringify(payload, null, 2);
+        navigator.clipboard.writeText(json).then(() => addLog(`Admin: exported debug JSON (${filename}) and copied it to clipboard.`, "Admin")).catch(() => addLog(`Admin: exported debug JSON (${filename}); clipboard copy was blocked.`, "Admin"));
+      } else {
+        addLog(`Admin: exported debug JSON (${filename}).`, "Admin");
+      }
+    };
+    const confirmLauncherSlotChange = (verb, slot) => {
+      const title = launcherRoundTitleForKey(canonicalRoundKeyForSlot(slot));
+      return confirm(`${verb} this ${title} slot? This only affects this browser's local save. It cannot be undone.`);
+    };
+    const resetLauncherSlot = (slot = {}) => {
+      if (!slot?.slotKey || !confirmLauncherSlotChange("Reset", slot)) return;
+      resetGlwLauncher(glwSeedMode, slot.slotKey, canonicalRoundKeyForSlot(slot));
+      setLastUpdateSummary(`Reset local slot ${slot.roundTitle || launcherRoundTitleForKey(canonicalRoundKeyForSlot(slot))}.`);
+    };
+    const deleteLauncherSlot = (slot = {}) => {
+      if (!slot?.slotKey || !confirmLauncherSlotChange("Delete", slot)) return;
+      safeDeleteRoundSlot(slot.slotKey);
+      removeRoundSlotFromIndex(slot.slotKey);
+      if (slot.slotKey === activeRoundSlotKey) {
+        safeDeleteStorageKey(SAVE_KEY);
+        resetGlwLauncher(glwSeedMode, null, canonicalRoundKeyForSlot(slot));
+        setLastUpdateSummary(`Deleted active local slot ${slot.roundTitle || launcherRoundTitleForKey(canonicalRoundKeyForSlot(slot))}.`);
+      } else {
+        setLastUpdateSummary(`Deleted local slot ${slot.roundTitle || launcherRoundTitleForKey(canonicalRoundKeyForSlot(slot))}.`);
+      }
+    };
+    const renderLocalGameSlotsPanel = () => <Panel title="Local Game Slots">
+      <p className="text-orange-200 mb-3">Saves are stored locally in this browser only. They are not stored on a server and are not shared between devices.</p>
+      <div className="grid md:grid-cols-2 gap-2 mb-2">
+        <button className="classic-btn antro-action-btn" onClick={() => resetGlwLauncher("start", GLW_LAUNCHER_SLOT_KEY, "glw")}>Start Godlike Warfare</button>
+        <button className="classic-btn antro-action-btn" onClick={() => startIntroGameSlot("start")}>Start Intro Game</button>
+      </div>
+      <div className="grid md:grid-cols-2 gap-2 mb-3 text-xs text-orange-600">
+        <div className="border border-orange-950 bg-black/50 p-2 leading-relaxed">Late-stage 4x war scenario with full revives.</div>
+        <div className="border border-orange-950 bg-black/50 p-2 leading-relaxed">Slower 1x intro round: 1,000 land, 1,000,000 cards, no revives.</div>
+      </div>
+      <p className="text-xs text-orange-600 mb-3">Starting either round opens a separate local slot and will not overwrite the other one.</p>
+      {launcherSlots.length ? <div className="grid gap-2">
+        {launcherSlots.map((slot) => {
+          const speciesName = races[slot.speciesKey]?.name || raceNameFromKey(slot.speciesKey);
+          const isCurrent = slot.slotKey === activeRoundSlotKey;
+          return <div key={slot.slotKey} className={`border p-3 bg-black/60 ${isCurrent ? "border-orange-300" : "border-orange-900"}`}>
+            <div className="flex justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-orange-200">{slot.roundTitle || launcherRoundTitleForKey(slot.roundKey)}</span>
+                  <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{slot.roundShortLabel || launcherRoundShortLabelForKey(slot.roundKey)}</span>
+                  <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Local Slot</span>
+                  {isCurrent ? <span className="text-[10px] uppercase tracking-wide border border-orange-500 bg-[#2a0d02] text-orange-200 px-2 py-0.5">Open Now</span> : null}
+                </div>
+                <div className="text-xs text-orange-500 mt-1">Short label: {slot.roundShortLabel || launcherRoundShortLabelForKey(slot.roundKey)} · Round name: {slot.roundName || launcherRoundNameForKey(slot.roundKey)}</div>
+                <div className="text-xs text-orange-600 mt-1">Round key: {slot.roundKey} · Slot key: {slot.slotKey}</div>
+                <div className="text-xs text-orange-600 mt-1">Player: {slot.playerName || "SONAR"} · Species: {speciesName}</div>
+                <div className="text-xs text-orange-600 mt-1">Saved under: {slot.version || PROTOTYPE_VERSION} · Saved: {slot.savedAt ? new Date(slot.savedAt).toLocaleString() : "Not yet stamped"}</div>
+                <div className="text-xs text-orange-600 mt-1">Land: {fmt(Number(slot.land || 0))} · Power: {compactFmt(Number(slot.power || 0))}</div>
+                <div className="text-xs text-orange-700 mt-1">{isCurrent ? "This is the current open local slot in this browser." : "This slot is stored only in this browser."}</div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button className="classic-btn antro-action-btn" onClick={() => switchRoundSlot(slot.slotKey)}>Continue</button>
+                <button className="classic-btn antro-action-btn" onClick={() => exportLauncherSlotDebug(slot)}>Export Debug File</button>
+                <button className="classic-btn antro-action-btn" onClick={() => resetLauncherSlot(slot)}>Reset Slot / Restart Round</button>
+                <button className="classic-btn antro-action-btn" onClick={() => deleteLauncherSlot(slot)}>Delete Slot</button>
+              </div>
+            </div>
+          </div>;
+        })}
+      </div> : <div className="text-sm text-orange-600 border border-orange-950 p-3 bg-black/60">No local GLW or IG save found for this browser. Start Godlike Warfare or Intro Game to create one.</div>}
+      <p className="text-xs text-orange-600 mt-3">Launcher slot exports work for the selected slot. In-game debug export remains available from the Save / Load screen too.</p>
+    </Panel>;
+
     return shell(<>
       <div className="grid xl:grid-cols-[1.15fr_0.85fr] gap-4">
-        <Panel title={glwRaceRegistered ? "GLW Launcher" : "Choose Species"}>
+        <Panel title={glwRaceRegistered ? `${selectedRound.name} Launcher` : "Choose Species"}>
           <div className="grid lg:grid-cols-[280px_1fr] gap-4">
             <div>
               <label className="block text-orange-300 mb-1">Species</label>
@@ -5668,11 +5939,11 @@ export default function App() {
               <div className="text-xs text-orange-600 leading-relaxed mb-3">{glwRaceRegistered ? "Species locked for this round. Use either reset button to choose again." : (selectedChoose.selectorLine || selectedBonusCard.doctrine || selectedTrait.summary || "Species profile")}</div>
               <label className="block text-orange-300 mb-1">Empire name</label>
               <input className="w-full bg-black border border-orange-900 text-orange-100 px-2 py-2 mb-2" value={playerNameDraft} maxLength={TEXT_LIMITS.playerName} onChange={(e) => setPlayerNameDraft(cleanSingleLineText(e.target.value, TEXT_LIMITS.playerName))} onKeyDown={(e) => { if (e.key === "Enter" && !glwRaceRegistered) confirmPlayerName(); }} disabled={glwRaceRegistered} />
-              <div className="text-xs text-orange-600 mb-4">{glwSeedMode === "late" ? "Late-war seed: 75% of ticks passed." : "Start seed: fresh GLW clock."}</div>
+              <div className="text-xs text-orange-600 mb-4">{selectedRoundKey === "intro" ? "Start seed: fresh Intro Game clock." : glwSeedMode === "late" ? "Late-war seed: 75% of ticks passed." : "Start seed: fresh GLW clock."}</div>
               <div className="flex gap-2 flex-wrap">
                 {glwRaceRegistered ? <button className="classic-btn antro-action-btn" onClick={() => enterCurrentGame("status")}>Enter Game</button> : <button className="classic-btn antro-action-btn" onClick={confirmPlayerName}>Enter Game</button>}
-                <button className="classic-btn antro-action-btn" onClick={() => resetGlwLauncher("start")}>Reset from Start</button>
-                <button className="classic-btn antro-action-btn" onClick={() => resetGlwLauncher("late")}>Reset from 75%</button>
+                <button className="classic-btn antro-action-btn" onClick={() => resetGlwLauncher("start", selectedRoundKey === "intro" ? INTRO_LAUNCHER_SLOT_KEY : GLW_LAUNCHER_SLOT_KEY, selectedRoundKey === "intro" ? "intro" : "glw")}>Reset from Start</button>
+                {selectedRoundKey === "glw" ? <button className="classic-btn antro-action-btn" onClick={() => resetGlwLauncher("late", GLW_LAUNCHER_SLOT_KEY, "glw")}>Reset from 75%</button> : null}
               </div>
               <div className="mt-4 border border-orange-950 bg-black/60 p-3 text-xs text-orange-500">
                 <div className="text-orange-300 font-bold mb-2">Wording lock</div>
@@ -5682,24 +5953,20 @@ export default function App() {
               </div>
             </div>
             <div className="border border-orange-950 bg-black/40 p-3">
-              <div className="text-xs uppercase tracking-[0.28em] text-orange-700 mb-1">Single GLW build</div>
+              <div className="text-xs uppercase tracking-[0.28em] text-orange-700 mb-1">Browser-local {roundProfile} build</div>
               <h2 className="text-2xl text-orange-100 font-bold mb-2" style={{ color: "var(--species-accent)" }}>{selectedChoose.bonusTitle || selectedBonusCard.title || selectedTrait.trait || "Species doctrine"}</h2>
               {doctrineImage ? <img src={doctrineImage} alt={`${selectedDisplayName} doctrine image`} className="species-art-frame w-full max-h-72 object-cover border mb-3" /> : null}
               <p className="text-orange-100 leading-relaxed mb-3">{selectedChoose.flavourLine || selectedBonusCard.identityText || selectedTrait.summary || "Doctrine detail pending."}</p>
               {(() => {
-                const clock = roundClockSnapshot("glw", roundStartedAt, Date.now(), 4);
+                const clock = roundClockSnapshot(selectedRoundKey === "intro" ? "intro" : "glw", roundStartedAt, Date.now(), Number(roundSettings.gameSpeed) || 1);
                 const remainingRealMs = Math.max(0, Number(clock.realEndAt || Date.now()) - Date.now());
-                const totalRealMs = GAME_TOTAL_GAME_MS / Math.max(0.001, Number(clock.speed || 4));
-                return <OldTable rows={[["Round", "GLW only"], ["Speed", "4x"], ["Explore", "Disabled"], ["Revives", "Full"], ["Progress", `${Number(clock.percent || 0).toFixed(1)}% · ${fmt(clock.elapsedTicks || 0)}/${fmt(clock.totalTicks || GAME_TOTAL_TICKS)} ticks`], ["Time left", `${compactDdhhmmFromMs(remainingRealMs)}/${compactDdhhmmFromMs(totalRealMs)}`], ["Launcher", "No round select / no snapshots / no multigame slots"]]} />;
+                const totalRealMs = GAME_TOTAL_GAME_MS / Math.max(0.001, Number(clock.speed || roundSettings.gameSpeed || 1));
+                return <OldTable rows={[["Round", selectedRound.name], ["Speed", `${roundSettings.gameSpeed || 1}x`], ["Explore", roundSettings.exploreEnabled === false ? "Disabled" : "Enabled"], ["Revives", roundSettings.revives || "Unknown"], ["Progress", `${Number(clock.percent || 0).toFixed(1)}% · ${fmt(clock.elapsedTicks || 0)}/${fmt(clock.totalTicks || GAME_TOTAL_TICKS)} ticks`], ["Time left", `${compactDdhhmmFromMs(remainingRealMs)}/${compactDdhhmmFromMs(totalRealMs)}`], ["Launcher", "Browser-local slots shown on the right"]]} />;
               })()}
             </div>
           </div>
         </Panel>
-        <Panel title={`${selectedDisplayName} Species Dossier`}>
-          <div className="text-xs uppercase tracking-[0.24em] text-orange-700 mb-1">Short form story</div>
-          <p className="text-orange-100 leading-relaxed mb-4">{selectedChoose.shortStory || selectedBonusCard.identityText || selectedManifest.originSummary || "Species story pending."}</p>
-          <OldTable rows={[["Identity", selectedChoose.identity || selectedManifest.identity || selectedTrait.title || "Pending"], ["Origin", selectedChoose.origin || selectedManifest.homeworld || "Field Manual record pending"], ["Doctrine", selectedChoose.doctrine || selectedBonusCard.doctrine || selectedManifest.doctrine || "Doctrine pending"], ["Profile", selectedChoose.profile || selectedBonusCard.shortText || selectedTrait.summary || selectedManifest.originSummary || "Summary pending"]]} />
-        </Panel>
+        {renderLocalGameSlotsPanel()}
       </div>
     </>);
     if (entryStage === "account") return shell(<>
@@ -5797,7 +6064,7 @@ export default function App() {
       const snapshotSlots = slots.filter((slot) => isSnapshotSlot(slot) || !liveSlotKeys.has(slot.slotKey));
       return <Panel title="Save / Load"><p className="text-orange-200 mb-3">Live round slots are the fixed autosaving games in this browser: Slot 1 is Intro Game, Slot 2 is Godlike Warfare, and Slot 3 is the Admin Round. Only one live autosave is shown for each slot. <span className="text-orange-300 font-bold">Open Now</span> marks the slot currently loaded in the app.</p><Panel title="Live Round Slots"><div className="grid gap-2 mb-2">{liveSlots.length ? liveSlots.map((slot) => renderSlotCard(slot, "live")) : <div className="text-sm text-orange-600 border border-orange-950 p-2 bg-black/60">No live round slots listed yet. Register for a round or create an admin round to start one.</div>}</div><p className="text-xs text-orange-600">Use Reset / Clear carefully: it clears the live autosave for that fixed slot in this browser.</p></Panel><Panel title="Saved Snapshots / Local Copies"><div className="grid gap-2 mb-2">{snapshotSlots.length ? snapshotSlots.map((slot) => renderSlotCard(slot, "snapshot")) : <div className="text-sm text-orange-600 border border-orange-950 p-2 bg-black/60">No manual snapshots or extra local copies yet.</div>}</div><div className="flex gap-2 flex-wrap mt-3"><button className="classic-btn antro-action-btn" onClick={saveCurrentStateAsNewSlot}>Create Snapshot from Current State</button><button className="classic-btn antro-action-btn" onClick={exportCurrentSave}>Export Current Save</button></div></Panel>{saveExportText ? <textarea className="w-full h-28 bg-black border border-orange-900 text-orange-100 text-xs p-2 mb-3" readOnly value={saveExportText} onFocus={(e) => e.target.select()} /> : null}<label className="block text-orange-300 mb-1">Import pasted save JSON</label><textarea className="w-full h-24 bg-black border border-orange-900 text-orange-100 text-xs p-2" value={saveImportDraft} onChange={(e) => setSaveImportDraft(e.target.value)} placeholder="Paste exported AntrophAI save here" /><div className="flex gap-2 flex-wrap mt-2"><button className="classic-btn antro-action-btn" onClick={importSaveAsNewSlot}>Import as New Slot</button><button className="classic-btn antro-action-btn" onClick={() => setSaveImportDraft("")}>Clear Import Box</button></div></Panel>;
     };
-    const renderGameAdminTab = () => adminMode ? <>{renderRoundSetup()}<Panel title="Game Creation"><p className="text-orange-200 mb-3">Create or stamp a local round slot using the currently selected Round Select entry and the current Game Admin settings.</p><OldTable rows={[["Selected round", selectedRoundDisplayName], ["Selected profile", roundProfile], ["Game name", gameName], ["Existing registration", selectedRoundSlot ? "Already registered" : "None for selected round"], ["Admin slot behaviour", selectedRoundKey === "admin-start" ? "Reset/create overwrites the single Admin Round slot" : "Normal rounds keep separate local registrations"]]} /><div className="flex gap-2 flex-wrap mt-4">{selectedRoundKey === "admin-start" || !registeredSlotForRound(selectedRoundKey) ? <button className="classic-btn antro-action-btn" onClick={() => startNewRoundSlot(selectedRoundKey)}>{selectedRoundKey === "admin-start" ? "Reset / Create Admin Round" : "Start New Slot for Selected Round"}</button> : <span className="text-xs text-orange-600 self-center">Intro Game and Godlike Warfare allow one local registration each; delete the slot in Save / Load to start again.</span>}<button className="classic-btn antro-action-btn" onClick={applyRoundStartingValues}>Apply Starting Values</button></div></Panel></> : <Panel title="Game Admin"><p className="text-orange-200 mb-3">Game creation and round setup controls are available after Admin Access is enabled.</p><button className="classic-btn antro-action-btn" onClick={requestAdminAccess}>Enable Admin Access</button></Panel>;
+    const renderGameAdminTab = () => adminMode ? <>{renderRoundSetup()}<Panel title="Game Creation"><p className="text-orange-200 mb-3">Create or stamp a local round slot using the currently selected Round Select entry and the current Game Admin settings.</p><OldTable rows={[["Selected round", selectedRoundDisplayName], ["Selected profile", roundProfile], ["Game name", gameName], ["Existing registration", selectedRoundSlot ? "Already registered" : "None for selected round"], ["Admin slot behaviour", selectedRoundKey === "admin-start" ? "Reset/create overwrites the single Admin Round slot" : "Normal rounds keep separate local registrations"]]} /><div className="flex gap-2 flex-wrap mt-4">{selectedRoundKey === "admin-start" || !registeredSlotForRound(selectedRoundKey) ? <button className="classic-btn antro-action-btn" onClick={() => startNewRoundSlot(selectedRoundKey)}>{selectedRoundKey === "admin-start" ? "Reset / Create Admin Round" : "Start New Slot for Selected Round"}</button> : <span className="text-xs text-orange-600 self-center">Local registrations stay browser-local; use the Local Game Slots panel to create another GLW save or delete the one shown here.</span>}<button className="classic-btn antro-action-btn" onClick={applyRoundStartingValues}>Apply Starting Values</button></div></Panel></> : <Panel title="Game Admin"><p className="text-orange-200 mb-3">Game creation and round setup controls are available after Admin Access is enabled.</p><button className="classic-btn antro-action-btn" onClick={requestAdminAccess}>Enable Admin Access</button></Panel>;
     const renderSelectedRoundTab = () => roundSelectTab === "access" ? renderAccessDisplayTab() : roundSelectTab === "registration" ? renderCurrentRegistrationTab() : roundSelectTab === "saves" ? renderSaveLoadTab() : roundSelectTab === "admin" ? renderGameAdminTab() : renderRoundSelectTab();
     if (entryStage === "rounds") return shell(<>
       <Panel title="Round Select Controls"><div className="flex gap-2 flex-wrap">{roundSelectTabs.map(renderRoundTabButton)}</div></Panel>
@@ -5850,6 +6117,7 @@ export default function App() {
 
   const pages = { status: renderStatus, admin: renderAdmin, assistance: renderSignalAssistance, help: renderHelp, records: renderRecords, raceLibrary: renderRaceLibrary, raceArchive: renderRaceArchivePage, raceArchivePlates: renderRaceArchivePlatesPage, buildingLibrary: renderBuildingLibrary, battleOutcomes: renderBattleOutcomes, build: renderBuild, destroy: renderDestroy, explore: renderExplore, barracks: renderBarracks, disband: renderDisband, war: renderWar, report: renderReport, battlelog: renderBattleLog, profile: renderProfile, allianceProfile: renderAllianceProfile, rankings: renderRankings, news: renderNews, bonus: () => <Panel title={pageLabel("bonus")}><p className="mb-3">Follow the bonus link once every 24 hours to receive 500,000 {currencyLabel}.</p><OldTable rows={[["Bonus Window", "welcome to 2001"], ["Time Until Next Bonus", bonusCountdownLabel()], ["Reward", `500,000 ${currencyLabel}`]]} /><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={openBonusWindow}>Open Bonus Window</button><button className="classic-btn antro-action-btn" onClick={claimBonus} disabled={bonusSecondsRemaining() > 0}>Claim Bonus</button></div></Panel>, bank: renderBank, factories: renderFactories, mines: renderMines, market: renderMarket, science: renderScience, alliances: renderAlliances, messages: renderMessages, missiles: renderMissiles, online: renderOnline, shops: renderShops, spy: renderSpyCenter, search: renderSearch, todo: renderSelfTests };
 
+  if (!testerAccessRecord?.accepted) return renderTesterAccessGate();
   if (hydrated && !playerNameSetupComplete) return renderNameSetup();
 
   if (page === "raceArchive") return renderRaceArchivePage(selectedHelpRace);

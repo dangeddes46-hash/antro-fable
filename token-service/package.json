@@ -1,0 +1,15 @@
+{
+  "name": "antrophai-invite-token-service",
+  "private": true,
+  "version": "0.41.84",
+  "description": "Supabase-backed invite-token service skeleton for AntrophAI v0.41.84",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "hash-token": "node scripts/hash-token.js",
+    "check": "node --check src/server.js && node --check scripts/hash-token.js"
+  }
+}
