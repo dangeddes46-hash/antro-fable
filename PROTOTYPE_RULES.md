@@ -1,4 +1,4 @@
-# AntrophAI prototype rules - v0.41.86
+# AntrophAI prototype rules - v0.41.93
 
 ## Round profile
 
@@ -13,6 +13,10 @@ v0.41.87 is planning/docs only for the future multiplayer architecture.
 v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQL is draft-only and has not been applied.
 
 v0.41.90 adds a separate game-service skeleton under `game-service/`. It is read-only and not wired to the client yet.
+
+v0.41.92 adds a read-only Shared Multiplayer DEV preview in the launcher. It is a browser-facing inspection panel only and must not be treated as multiplayer gameplay.
+
+v0.41.93 adds a dev-only server-authorised build-factory proof in the Shared Multiplayer DEV panel. It is temporary scaffolding for testing the browser -> service -> Supabase authority path and must not be treated as final building gameplay.
 
 Keep these worlds separate:
 

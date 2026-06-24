@@ -1,4 +1,4 @@
-# AntrophAI v0.41.86 GLW handoff build
+# AntrophAI v0.41.93 GLW handoff build
 
 This package is a clean local prototype handoff for the single-player Godlike Warfare (GLW) test build of AntrophAI.
 
@@ -11,6 +11,10 @@ v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQ
 v0.41.90 adds the first standalone multiplayer game-service skeleton under `game-service/`. It is read-only, does not mutate multiplayer state yet, and is not wired to the client yet.
 
 v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/` so the hosted service can create and read a tiny canonical multiplayer DEV state. The client is still not wired.
+
+v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview that reads the hosted round summary from the game service. It does not add client-side multiplayer actions or any direct Supabase access from the browser.
+
+v0.41.93 adds the first dev-only server-authorised multiplayer action proof. The Shared Multiplayer DEV panel can ask the hosted game service to build +1 factory for DEV Player One, but the browser still does not write Supabase directly.
 
 Planning note: `INVITE_TOKEN_ACCESS_PLAN.md` documents the invite-token access rollout, including the hosted DEV path and the remaining static fallback codes.
 

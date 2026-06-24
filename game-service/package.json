@@ -1,8 +1,8 @@
 {
   "name": "antrophai-game-service",
   "private": true,
-  "version": "0.41.91",
-  "description": "Standalone multiplayer game-service dev seed/read proof for AntrophAI v0.41.91",
+  "version": "0.41.93",
+  "description": "Standalone multiplayer game-service dev seed/read/build-action proof for AntrophAI v0.41.93",
   "type": "module",
   "engines": {
     "node": ">=18"

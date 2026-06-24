@@ -9,6 +9,10 @@ v0.41.90 adds the first standalone game-service skeleton under `game-service/`. 
 
 v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/`. They are scaffolding, not normal gameplay endpoints, and should be removed or disabled before public multiplayer testing.
 
+v0.41.92 adds a browser-side read-only launcher preview that consumes `GET /api/dev/round-summary`. It is inspection-only and does not write multiplayer state or call Supabase directly.
+
+v0.41.93 adds the first dev-only server-authorised multiplayer action proof: `POST /api/dev/actions/build-factory`. It is scaffolding for testing the browser -> service -> Supabase authority path and is not final building gameplay.
+
 ## v0.41.91 dev proof endpoints
 
 These endpoints exist only to prove the hosted game service can write and read a tiny canonical multiplayer DEV state:
@@ -17,6 +21,64 @@ These endpoints exist only to prove the hosted game service can write and read a
 - `GET /api/dev/round-summary`
 
 They are not player action endpoints, they do not process ticks, and they are not part of the normal multiplayer gameplay contract.
+
+## v0.41.93 dev proof action endpoint
+
+This endpoint exists only to prove that the hosted game service can accept a browser order, validate the round/player pair, and write one canonical multiplayer DEV change.
+
+- `POST /api/dev/actions/build-factory`
+
+Request body:
+
+```json
+{
+  "roundKey": "shared-dev-001",
+  "displayName": "DEV Player One",
+  "amount": 1
+}
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "action": {
+    "type": "dev_build_factory",
+    "amount": 1,
+    "buildingKey": "factory",
+    "oldCount": 0,
+    "newCount": 1
+  },
+  "round": {
+    "roundKey": "shared-dev-001",
+    "currentTick": 0
+  },
+  "player": {
+    "displayName": "DEV Player One"
+  }
+}
+```
+
+Auth/access requirements:
+
+- temporary DEV-only access
+- `ENABLE_DEV_ENDPOINTS=true`
+
+Validation responsibilities:
+
+- ensure the round exists
+- ensure the named player exists and is joined to the round
+- validate the requested amount is an integer between 1 and 10
+- write the action queue row, round event, audit row, and updated factory count in Supabase
+- never accept browser-side direct Supabase writes
+
+What to log:
+
+- round id and player id
+- requested amount and resulting factory counts
+- action queue id and event/audit ids
+- any validation failure reason
 
 ## Common conventions
 
@@ -56,7 +118,7 @@ Response shape:
 {
   "ok": true,
   "service": "antrophai-game-service",
-    "version": "v0.41.91",
+  "version": "v0.41.93",
   "environment": "production",
   "databaseReady": true,
   "tickReady": true

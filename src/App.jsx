@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.86";
+const PROTOTYPE_VERSION = "v0.41.93";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -28,6 +28,8 @@ const INVITE_TOKEN_SERVICE_HOST = (() => {
     return null;
   }
 })();
+const GAME_SERVICE_URL = String(import.meta.env.VITE_GAME_SERVICE_URL || "https://antrophai-game-service-dev.onrender.com").replace(/\/+$/, "");
+const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 const ADMIN_ROUND_SLOT_KEY = "admin-start-local";
 const TESTER_ACCESS_KEY = "antrophaiTesterAccessAccepted";
 const TESTER_ACCESS_ALLOWLIST = {
@@ -1301,6 +1303,26 @@ function testerAccessModeLabel(record) {
   }
   return "Access: development fallback";
 }
+function multiplayerPreviewFailureMessage(status, errorCode) {
+  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV preview is currently disabled.";
+  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
+  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
+    return "Shared multiplayer service could not be reached.";
+  }
+  return "Shared multiplayer preview could not be loaded.";
+}
+
+function multiplayerDevActionFailureMessage(status, errorCode) {
+  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
+  if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
+  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
+  if (errorCode === "player_not_found") return "DEV Player One was not found in the shared round.";
+  if (errorCode === "player_not_joined") return "DEV Player One is not joined to the shared round.";
+  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
+    return "Shared multiplayer service could not be reached.";
+  }
+  return "Shared multiplayer build action could not be completed.";
+}
 
 function retalWindowMsForSettings(settings) {
   const speed = Math.max(1, Number(settings?.gameSpeed || 1));
@@ -1620,6 +1642,8 @@ export default function App() {
   const [testerAccessCommentDraft, setTesterAccessCommentDraft] = useState("");
   const [testerAccessError, setTesterAccessError] = useState("");
   const [testerAccessSubmitting, setTesterAccessSubmitting] = useState(false);
+  const [multiplayerPreviewState, setMultiplayerPreviewState] = useState({ loading: false, error: "", fetchedAt: null, summary: null });
+  const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null });
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2287,6 +2311,133 @@ export default function App() {
     setTesterAccessCommentDraft("");
     setTesterAccessError("");
     setTesterAccessSubmitting(false);
+    setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
+    setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null });
+  }
+  async function refreshMultiplayerPreview() {
+    if (multiplayerPreviewState.loading) return;
+    if (!testerAccessRecord?.accepted) return;
+    if (!GAME_SERVICE_URL) {
+      setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt: Date.now(), summary: null });
+      return;
+    }
+
+    setMultiplayerPreviewState((prev) => ({ ...prev, loading: true, error: "" }));
+    const fetchedAt = Date.now();
+    try {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
+      try {
+        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/round-summary?roundKey=${encodeURIComponent(MULTIPLAYER_PREVIEW_ROUND_KEY)}`, {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+          signal: controller?.signal,
+        });
+        const text = await response.text();
+        let result = {};
+        if (text) {
+          try {
+            result = JSON.parse(text);
+          } catch {
+            result = { raw: text };
+          }
+        }
+
+        if (!response.ok || result?.ok === false) {
+          const errorCode = result?.error || null;
+          const errorMessage = multiplayerPreviewFailureMessage(response.status, errorCode);
+          setMultiplayerPreviewState({ loading: false, error: errorMessage, fetchedAt, summary: null });
+          return;
+        }
+
+        const summary = {
+          round: result?.round || null,
+          players: Array.isArray(result?.players) ? result.players : [],
+          recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
+        };
+        setMultiplayerPreviewState({ loading: false, error: "", fetchedAt, summary });
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
+    }
+  }
+  async function submitMultiplayerDevBuildFactory() {
+    if (multiplayerDevActionState.loading) return;
+    if (!testerAccessRecord?.accepted) return;
+    if (!GAME_SERVICE_URL) {
+      const attemptedAt = Date.now();
+      setMultiplayerDevActionState({
+        loading: false,
+        error: multiplayerDevActionFailureMessage(503, "service_unavailable"),
+        lastActionAt: attemptedAt,
+        lastActionType: "dev_build_factory",
+        lastActionResult: null,
+      });
+      return;
+    }
+
+    const attemptedAt = Date.now();
+    setMultiplayerDevActionState((prev) => ({ ...prev, loading: true, error: "" }));
+    try {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
+      try {
+        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/actions/build-factory`, {
+          method: "POST",
+          headers: { "Accept": "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+            displayName: "DEV Player One",
+            amount: 1,
+          }),
+          signal: controller?.signal,
+        });
+        const text = await response.text();
+        let result = {};
+        if (text) {
+          try {
+            result = JSON.parse(text);
+          } catch {
+            result = { raw: text };
+          }
+        }
+
+        if (!response.ok || result?.ok === false) {
+          const errorCode = result?.error || null;
+          const errorMessage = multiplayerDevActionFailureMessage(response.status, errorCode);
+          setMultiplayerDevActionState({
+            loading: false,
+            error: errorMessage,
+            lastActionAt: attemptedAt,
+            lastActionType: "dev_build_factory",
+            lastActionResult: null,
+          });
+          return;
+        }
+
+        const action = result?.action || null;
+        setMultiplayerDevActionState({
+          loading: false,
+          error: "",
+          lastActionAt: attemptedAt,
+          lastActionType: action?.type || "dev_build_factory",
+          lastActionResult: action,
+        });
+        refreshMultiplayerPreview();
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    } catch {
+      setMultiplayerDevActionState({
+        loading: false,
+        error: multiplayerDevActionFailureMessage(503, "service_unavailable"),
+        lastActionAt: attemptedAt,
+        lastActionType: "dev_build_factory",
+        lastActionResult: null,
+      });
+    }
   }
   async function submitTesterAccess() {
     if (testerAccessSubmitting) return;
@@ -2423,6 +2574,10 @@ export default function App() {
     if (typeof document === "undefined") return;
     document.title = `AntrophAI GLW Prototype ${PROTOTYPE_VERSION}`;
   }, []);
+  useEffect(() => {
+    if (!hydrated || !testerAccessRecord?.accepted) return;
+    refreshMultiplayerPreview();
+  }, [hydrated, testerAccessRecord?.accepted]);
 
   useEffect(() => { if (!hydrated) return; const payload = currentSavePayload(); safeWriteSave(payload); if (activeRoundSlotKey) safeWriteRoundSlot(activeRoundSlotKey, roundSlotPayload(activeRoundSlotKey)); }, [hydrated, activeRoundSlotKey, playerNameSetupComplete, entryStage, selectedRoundKey, selectedSpeciesKey, glwSeedMode, glwRaceRegistered, page, adminMode, displayModel, log, worldReports, buildForm, trainForm, mineAllocation, factoryAllocation, buildSpeedFactor, useBarracksSpeedMinerals, pageCompletionNotice, scienceOrder, scienceLevels, roundProfile, roundSettings, gameName, roundStartedAt, selectedTargetName, disableTargetTurrets, spyTarget, spies, mercenaries, alliance, shareAllianceProfile, allianceShareEnabledMembers, allianceAnnouncementDraft, allianceSubPage, donateAllianceLandAmount, allianceBankBuildQty, allianceBankSpeedFactor, allianceBankDepositAmount, lrcCardsAmount, lrcEnergyAmount, lrcMineralName, lrcMineralAmount, lrcTargetType, lrcTargetName, activeLrcSequence, exploreHours, exploreCards, newsFilter, newsPage, battleLogPage, battleLogOpponent, botDifficulty, onlineSort, nexusMineralName, nexusMineralAmount, demoMemberName, diplomacyTargetType, diplomacyTargetName, activeWars, alliedStatuses, diplomacyRequests, retalRecords, grievances, battleReport, lastUpdateSummary, outgoingMissiles, incomingMissiles, messages, marketOrders, processedBattleKeys, player, demoOpponents]);
 
@@ -4040,6 +4195,21 @@ export default function App() {
         index: roundSlotIndex,
         liveIndex: liveRoundSlotIndex(roundSlotIndex)
       },
+      multiplayerPreview: {
+        gameServiceUrl: GAME_SERVICE_URL || null,
+        gameServiceHost: (() => { try { return GAME_SERVICE_URL ? new URL(GAME_SERVICE_URL).host : null; } catch { return null; } })(),
+        lastMultiplayerPreviewFetchAt: multiplayerPreviewState.fetchedAt || null,
+        lastMultiplayerPreviewFetchAtIso: multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toISOString() : null,
+        multiplayerPreviewRoundKey: multiplayerPreviewState.summary?.round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY,
+        multiplayerPreviewRoundId: multiplayerPreviewState.summary?.round?.id || null,
+        multiplayerPreviewPlayerCount: Array.isArray(multiplayerPreviewState.summary?.players) ? multiplayerPreviewState.summary.players.length : 0,
+        multiplayerPreviewError: multiplayerPreviewState.error || null,
+      },
+      lastMultiplayerDevActionAt: multiplayerDevActionState.lastActionAt || null,
+      lastMultiplayerDevActionAtIso: multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toISOString() : null,
+      lastMultiplayerDevActionType: multiplayerDevActionState.lastActionType || null,
+      lastMultiplayerDevActionResult: multiplayerDevActionState.lastActionResult || null,
+      lastMultiplayerPreviewError: multiplayerPreviewState.error || null,
       currentRoundSummary: {
         version: PROTOTYPE_VERSION,
         slotKey: activeRoundSlotKey,
@@ -6100,6 +6270,86 @@ export default function App() {
       </div> : <div className="text-sm text-orange-600 border border-orange-950 p-3 bg-black/60">No local GLW or IG save found for this browser. Start Godlike Warfare or Intro Game to create one.</div>}
       <p className="text-xs text-orange-600 mt-3">Launcher slot exports work for the selected slot. In-game debug export remains available from the Save / Load screen too.</p>
     </Panel>;
+    const renderSharedMultiplayerPreviewPanel = () => {
+      const summary = multiplayerPreviewState.summary || null;
+      const round = summary?.round || null;
+      const players = Array.isArray(summary?.players) ? summary.players : [];
+      const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
+      const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+      const roundName = round?.roundName || "Shared Multiplayer DEV";
+      const roundStatus = round?.status || "Unknown";
+      const currentTick = round?.currentTick ?? "—";
+      const roundId = round?.id || "—";
+      const lastFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not fetched yet";
+      const lastDevActionLabel = multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toLocaleString() : "Never";
+      const playerSummary = (player = {}) => {
+        const state = player.state || {};
+        const buildingRows = Array.isArray(player.buildings) ? player.buildings : [];
+        const factoryRow = buildingRows.find((row) => String(row?.buildingKey || "").toLowerCase() === "factory");
+        const factoryCount = Number(factoryRow?.effectiveCount ?? factoryRow?.count ?? 0);
+        return {
+          title: player.displayName || "Unknown player",
+          testerLabel: player.testerLabel || "",
+          raceLabel: raceNameFromKey(state.raceKey || ""),
+          tick: state.tick ?? "—",
+          stateVersion: state.stateVersion ?? "—",
+          land: fmt(Number(state.land || 0)),
+          power: compactFmt(Number(state.power || 0)),
+          money: compactFmt(Number(state.money || 0)),
+          buildingSummary: `Factory: ${fmt(Math.max(0, Math.floor(factoryCount || 0)))}`,
+        };
+      };
+      return <Panel title="Shared Multiplayer DEV">
+        <p className="text-orange-200 mb-3">Shared Multiplayer DEV preview from the hosted game service with one small DEV proof action. The browser can inspect this shared round, and the button below asks the service to make the canonical change.</p>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading}>{multiplayerPreviewState.loading ? "Refreshing preview..." : "Refresh preview"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading ? "Sending server order..." : "DEV order: build +1 factory"}</button>
+          <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Server-authorised proof</span>
+          <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{GAME_SERVICE_URL || "Game service unavailable"}</span>
+        </div>
+        <p className="text-xs text-orange-500 mb-3">This sends an order to the game service. The browser does not change the database directly.</p>
+        <OldTable rows={[
+          ["Service", GAME_SERVICE_URL || "Not configured"],
+          ["Round key", roundKey],
+          ["Round id", roundId],
+          ["Round name", roundName],
+          ["Status", roundStatus],
+          ["Current tick", currentTick],
+          ["Players", fmt(players.length)],
+          ["Last fetch", lastFetchLabel],
+          ["Last dev action", multiplayerDevActionState.lastActionType || "None"],
+          ["Last dev action at", lastDevActionLabel],
+        ]} />
+        {multiplayerPreviewState.loading ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer preview...</div> : null}
+        {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
+        {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
+        {multiplayerDevActionState.lastActionResult ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">Server built +{multiplayerDevActionState.lastActionResult.amount || 1} factory. Factory count is now {multiplayerDevActionState.lastActionResult.newCount ?? "—"}.</div> : null}
+        {!multiplayerPreviewState.loading && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
+        {players.length ? <div className="mt-3 grid gap-2">
+          {players.map((player) => {
+            const details = playerSummary(player);
+            return <div key={player.id} className="border border-orange-950 bg-black/50 p-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold text-orange-200">{details.title}</span>
+                {details.testerLabel ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{details.testerLabel}</span> : null}
+              </div>
+              <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
+              <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
+              {details.buildingSummary ? <div className="text-xs text-orange-700 mt-1">Buildings: {details.buildingSummary}</div> : null}
+            </div>;
+          })}
+        </div> : null}
+        {recentEvents.length ? <div className="mt-3 grid gap-2">
+          {recentEvents.map((event) => <div key={event.id} className="border border-orange-950 bg-black/50 p-2">
+            <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {event.tick ?? "—"} · {event.visibility || "unknown"}</div>
+            <div className="font-bold text-orange-200 mt-1">{event.title || event.eventType || "Event"}</div>
+            {event.body ? <div className="text-xs text-orange-200 mt-1 whitespace-pre-line">{event.body}</div> : null}
+            <div className="text-[11px] text-orange-700 mt-1">{event.createdAt ? new Date(event.createdAt).toLocaleString() : ""}</div>
+          </div>)}
+        </div> : null}
+        <p className="text-xs text-orange-600 mt-3">This preview is read-only. It does not write to localStorage or Supabase, and it does not change the browser-local GLW or IG saves.</p>
+      </Panel>;
+    };
 
     return shell(<>
       <div className="grid xl:grid-cols-[1.15fr_0.85fr] gap-4">
@@ -6141,7 +6391,10 @@ export default function App() {
             </div>
           </div>
         </Panel>
-        {renderLocalGameSlotsPanel()}
+        <div className="grid gap-4">
+          {renderLocalGameSlotsPanel()}
+          {renderSharedMultiplayerPreviewPanel()}
+        </div>
       </div>
     </>);
     if (entryStage === "account") return shell(<>

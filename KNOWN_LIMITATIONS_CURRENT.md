@@ -1,4 +1,4 @@
-# Known limitations - current v0.41.86 handoff
+# Known limitations - current v0.41.93 handoff
 
 ## Hosted multiplayer not implemented
 
@@ -23,6 +23,10 @@ Debug/admin buttons are useful for testing, but must be permission-gated and ser
 ## Tester access gate
 
 v0.41.86 keeps the browser-local GLW / Intro Game slot manager. The DEV client now supports invite-token access against the hosted token service, but it is still local UI, not real authentication, and it leaves browser-local saves untouched.
+
+v0.41.92 adds a read-only Shared Multiplayer DEV preview in the launcher. It only reads hosted round-summary data and does not write multiplayer state or touch browser-local GLW / Intro Game saves.
+
+v0.41.93 adds a dev-only server-authorised build-factory proof in the Shared Multiplayer DEV panel. It proves the browser can request a canonical server write, but it is not final building gameplay and must be disabled or removed before public multiplayer testing.
 
 ## Multiplayer planning only
 

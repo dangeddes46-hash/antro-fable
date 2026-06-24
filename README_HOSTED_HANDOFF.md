@@ -1,10 +1,14 @@
-# Hosted handoff notes - AntrophAI v0.41.86
+# Hosted handoff notes - AntrophAI v0.41.93
 
 ## Read this first
 
 The current build is a local single-player GLW prototype. It should not be deployed as real multiplayer by simply publishing the React app.
 
 v0.41.86 keeps the browser-local GLW / Intro Game slot manager. The DEV client now supports invite-token access against the hosted token service, but it is still not real authentication and saves remain browser-local.
+
+v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview. It reads hosted round-summary data from the game service and does not write multiplayer state from the browser.
+
+v0.41.93 adds the first dev-only server-authorised multiplayer action proof. The browser can ask the game service to build +1 factory for DEV Player One, and the server mutates the canonical multiplayer tables.
 
 v0.41.87 is the next planning/docs-only pass for the future multiplayer architecture. It does not add multiplayer code yet and it does not change gameplay or the current token-service runtime.
 
@@ -103,4 +107,4 @@ Random game outcomes should be resolved server-side or through deterministic see
 
 ## Version
 
-Current handoff version: v0.41.86
+Current handoff version: v0.41.93

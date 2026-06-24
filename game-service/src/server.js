@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.91';
+const SERVICE_VERSION = 'v0.41.93';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -136,7 +136,7 @@ app.get('/api/version', (req, res) => {
     localEnvLoaded: LOCAL_ENV_LOADED,
     supabaseConfigured: SUPABASE_CONFIGURED,
     devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
-    notes: 'Read-only game-service skeleton. Dev seed/read proof endpoints are temporary scaffolding.',
+    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints and the build-factory proof are temporary scaffolding.',
     timestamp: nowIso(),
   });
 });
@@ -212,6 +212,47 @@ app.get('/api/dev/round-summary', requireDevEndpoints, async (req, res) => {
   }
 });
 
+app.post('/api/dev/actions/build-factory', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev build-factory endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevBuildFactoryInput(req.body || {});
+    const result = await buildDevFactoryAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: {
+        type: 'dev_build_factory',
+        amount: result.amount,
+        buildingKey: 'factory',
+        oldCount: result.oldCount,
+        newCount: result.newCount,
+      },
+      round: {
+        roundKey: result.round.roundKey,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+      },
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'build_factory_failed');
+  }
+});
+
 app.get('/api/schema-status', async (req, res) => {
   if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
     res.status(503).json({
@@ -284,7 +325,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.91 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.93 game-service skeleton.',
   });
 });
 
@@ -428,6 +469,32 @@ function normalizeSeedInput(body) {
   };
 }
 
+function normalizeDevBuildFactoryInput(body) {
+  return {
+    roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
+    displayName: normalizeText(body.displayName || DEV_ROUND_DEFAULTS.displayName),
+    amount: clampDevBuildAmount(body.amount),
+    idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
+  };
+}
+
+function clampDevBuildAmount(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 1;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isInteger(parsed)) {
+    throw createServiceError(400, 'invalid_amount', 'Amount must be an integer between 1 and 10.');
+  }
+
+  return Math.min(10, Math.max(1, parsed));
+}
+
+function createServiceError(statusCode, code, message) {
+  return Object.assign(new Error(message), { statusCode, code });
+}
+
 async function seedDevRound(seedInput) {
   const round = await getOrCreateDevRound(seedInput);
   const player = await getOrCreateDevPlayer(round.row.id, seedInput);
@@ -529,6 +596,148 @@ async function readDevRoundSummary(roundKey) {
   };
 }
 
+async function buildDevFactoryAction(actionInput) {
+  const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
+    query.eq('round_key', actionInput.roundKey)
+  );
+
+  if (!round) {
+    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
+  }
+
+  const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
+    query.eq('display_name', actionInput.displayName)
+  );
+
+  if (!player) {
+    throw createServiceError(404, 'player_not_found', `DEV player ${actionInput.displayName} was not found in the shared round.`);
+  }
+
+  const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
+    query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
+  );
+
+  if (!playerRound) {
+    throw createServiceError(409, 'player_not_joined', `${actionInput.displayName} is not joined to the shared round.`);
+  }
+
+  const idempotencyKey = actionInput.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existingAction = await fetchSingleRow(
+      'multiplayer_action_queue',
+      'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_build_factory').eq('idempotency_key', idempotencyKey)
+    );
+
+    if (existingAction) {
+      const existingResult = existingAction.result || {};
+      const oldCount = Number(existingResult.old_count ?? existingResult.oldCount ?? existingAction.payload?.old_count ?? existingAction.payload?.oldCount ?? 0);
+      const newCount = Number(existingResult.new_count ?? existingResult.newCount ?? existingAction.payload?.new_count ?? existingAction.payload?.newCount ?? oldCount);
+      return {
+        round: formatRound(round),
+        player: formatPlayer(player),
+        amount: Number(existingAction.payload?.amount ?? actionInput.amount),
+        oldCount,
+        newCount,
+      };
+    }
+  }
+
+  const buildingRow = await fetchSingleRow(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+  );
+  const oldCount = Math.max(0, Math.floor(Number(buildingRow?.count ?? 0)));
+  const amount = actionInput.amount;
+  const newCount = oldCount + amount;
+  const processedAt = nowIso();
+  const actionPayload = {
+    round_key: round.round_key,
+    display_name: player.display_name,
+    building_key: 'factory',
+    amount,
+    old_count: oldCount,
+    new_count: newCount,
+  };
+  const actionResult = {
+    amount,
+    building_key: 'factory',
+    old_count: oldCount,
+    new_count: newCount,
+  };
+  const actionRow = await insertSingleRow('multiplayer_action_queue', {
+    round_id: round.id,
+    player_id: player.id,
+    action_type: 'dev_build_factory',
+    status: 'processed',
+    requested_tick: round.current_tick,
+    execute_after_tick: round.current_tick,
+    payload: actionPayload,
+    result: actionResult,
+    idempotency_key: idempotencyKey,
+    processed_at: processedAt,
+    updated_at: processedAt,
+  });
+
+  try {
+    await upsertRow('multiplayer_player_buildings', {
+      round_id: round.id,
+      player_id: player.id,
+      building_key: 'factory',
+      count: newCount,
+      effective_count: newCount,
+      updated_at: processedAt,
+    }, 'player_id,round_id,building_key');
+
+    const factoryWord = amount === 1 ? 'factory' : 'factories';
+
+    await insertSingleRow('multiplayer_round_events', {
+      round_id: round.id,
+      tick: round.current_tick,
+      event_type: 'dev_build_factory',
+      visibility: 'public',
+      actor_player_id: player.id,
+      title: 'Factory built',
+      body: `${player.display_name} built ${amount} ${factoryWord}.`,
+      payload: actionResult,
+    });
+
+    await insertSingleRow('multiplayer_audit_log', {
+      round_id: round.id,
+      player_id: player.id,
+      actor_type: 'dev',
+      event_type: 'dev_build_factory',
+      event_data: {
+        round_id: round.id,
+        round_key: round.round_key,
+        player_id: player.id,
+        display_name: player.display_name,
+        action_queue_id: actionRow.id,
+        building_key: 'factory',
+        amount,
+        old_count: oldCount,
+        new_count: newCount,
+      },
+    });
+  } catch (error) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unexpected build-factory failure.',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    throw error;
+  }
+
+  return {
+    round: formatRound(round),
+    player: formatPlayer(player),
+    amount,
+    oldCount,
+    newCount,
+  };
+}
+
 async function getOrCreateDevRound(seedInput) {
   const existing = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', seedInput.roundKey)
@@ -547,7 +756,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.91 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.93 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -585,7 +794,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.91 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.93 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -809,6 +1018,18 @@ async function insertSingleRow(tableName, values) {
 
   if (error) {
     throw Object.assign(new Error(error.message), { code: error.code || 'supabase_insert_failed' });
+  }
+
+  return data;
+}
+
+async function updateSingleRow(tableName, values, filterFn) {
+  const query = SUPABASE_CLIENT.from(tableName).update(values);
+  const filtered = filterFn(query);
+  const { data, error } = await filtered.select('*').single();
+
+  if (error) {
+    throw Object.assign(new Error(error.message), { code: error.code || 'supabase_update_failed' });
   }
 
   return data;

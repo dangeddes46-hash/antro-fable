@@ -1,4 +1,4 @@
-# AntrophAI v0.41.91 game-service dev seed/read proof
+# AntrophAI v0.41.93 game-service dev seed/read/build-action proof
 
 This folder contains the first standalone multiplayer game-service proof for AntrophAI.
 
@@ -6,9 +6,8 @@ It is separate from the invite-token service and separate from the browser clien
 
 Important:
 
-- This service is read-only by default in v0.41.91.
+- This service is read-only by default except for the temporary DEV proof endpoints enabled below.
 - It is not wired to the client yet.
-- It does not mutate multiplayer state yet.
 - It does not run ticks yet.
 - The browser client must not directly write multiplayer state.
 - The Supabase service role key is server-only.
@@ -22,6 +21,7 @@ Important:
 - `GET /api/schema-status`
 - `POST /api/dev/seed-round` when dev endpoints are enabled
 - `GET /api/dev/round-summary` when dev endpoints are enabled
+- `POST /api/dev/actions/build-factory` when dev endpoints are enabled
 
 ## Local setup
 
@@ -45,6 +45,8 @@ Important:
 
 4. Add your local values to `.env`.
 
+   The server loads `game-service/.env` automatically through `dotenv`, so you do not need to set these values manually in the shell each time.
+
 5. Start the service:
 
    ```powershell
@@ -59,7 +61,7 @@ Important:
    Invoke-RestMethod http://127.0.0.1:8790/api/schema-status
    ```
 
-If Supabase is not configured locally, `/health` still starts cleanly and `/api/schema-status` returns a useful configuration error.
+If Supabase is not configured locally, `/health` still starts cleanly and `/api/schema-status` returns a useful configuration error. The proof action endpoint fails cleanly with a dev-endpoints-disabled or Supabase-configured error instead of writing directly from the browser.
 
 The dev seed/read endpoints are temporary scaffolding. Keep them disabled for any public multiplayer test unless a specific DEV proof run requires them.
 
