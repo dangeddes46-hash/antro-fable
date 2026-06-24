@@ -1,4 +1,4 @@
-# Known limitations — current v0.41.83 handoff
+# Known limitations - current v0.41.86 handoff
 
 ## Hosted multiplayer not implemented
 
@@ -22,15 +22,36 @@ Debug/admin buttons are useful for testing, but must be permission-gated and ser
 
 ## Tester access gate
 
-v0.41.83 keeps the browser-local GLW / Intro Game slot manager. It is only local UI, not real authentication, and it leaves browser-local saves untouched.
+v0.41.86 keeps the browser-local GLW / Intro Game slot manager. The DEV client now supports invite-token access against the hosted token service, but it is still local UI, not real authentication, and it leaves browser-local saves untouched.
 
-True one-time tester tokens require a server-side redemption record or hosted token ledger. This static build only remembers access locally in one browser.
+## Multiplayer planning only
 
-See `INVITE_TOKEN_ACCESS_PLAN.md` for the v0.41.84 invite-token architecture and rollout phases.
+v0.41.87 is a planning/docs-only multiplayer architecture pass.
+
+v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQL is draft-only and has not been applied.
+
+v0.41.90 adds a read-only multiplayer game-service skeleton under `game-service/`. It does not mutate state or run ticks yet.
+
+It does not:
+
+- add multiplayer code
+- change gameplay formulas
+- migrate local saves into shared state
+- add a schema migration
+
+The next real technical step after review is expected to be a schema skeleton branch.
+
+The current reviewable SQL files live under `supabase/multiplayer/`.
+
+True one-time tester tokens require a server-side redemption record or hosted token ledger. The client now stores the resulting access grant locally in one browser after redeeming a valid invite token.
+
+See `INVITE_TOKEN_ACCESS_PLAN.md` for the invite-token access rollout and fallback notes.
+
+See `MULTIPLAYER_ARCHITECTURE_PLAN.md` for the future server-authoritative design direction.
 
 See `INVITE_TOKEN_ENDPOINT_CONTRACT.md` for the Phase 2 hosted redemption contract and ledger shape.
 
-See `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/` for the current Supabase service skeleton. The client is not wired to it yet.
+See `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/` for the current Supabase service skeleton. The DEV client now redeems invite tokens against that hosted service.
 
 ## Display modes
 

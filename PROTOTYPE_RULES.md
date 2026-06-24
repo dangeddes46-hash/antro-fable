@@ -1,10 +1,29 @@
-# AntrophAI prototype rules — v0.41.83
+# AntrophAI prototype rules - v0.41.86
 
 ## Round profile
 
 Current primary profile: Godlike Warfare / GLW.
 
-The static launcher also exposes a browser-local Intro Game slot alongside GLW. Tester access remains remembered locally in this browser only until a future server-side token ledger exists.
+The static launcher also exposes a browser-local Intro Game slot alongside GLW. Tester access can now be granted by hosted invite tokens in the DEV client, with local fallback codes retained for development use.
+
+## Multiplayer planning status
+
+v0.41.87 is planning/docs only for the future multiplayer architecture.
+
+v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQL is draft-only and has not been applied.
+
+v0.41.90 adds a separate game-service skeleton under `game-service/`. It is read-only and not wired to the client yet.
+
+Keep these worlds separate:
+
+- Local Prototype: current browser-local GLW / IG mode for formula, UI, and slot testing
+- Shared Multiplayer DEV: future server-authoritative mode with canonical shared state
+
+Do not mix local prototype saves with future shared multiplayer state.
+
+Do not treat localStorage as multiplayer truth.
+
+The current draft SQL lives under `supabase/multiplayer/` for review only.
 
 - 4x game speed
 - no explore in GLW

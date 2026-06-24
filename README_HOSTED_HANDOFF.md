@@ -1,20 +1,34 @@
-# Hosted handoff notes — AntrophAI v0.41.83
+# Hosted handoff notes - AntrophAI v0.41.86
 
 ## Read this first
 
 The current build is a local single-player GLW prototype. It should not be deployed as real multiplayer by simply publishing the React app.
 
-v0.41.83 keeps the browser-local GLW / Intro Game slot manager. It is still local-only, not real authentication, and saves remain browser-local.
+v0.41.86 keeps the browser-local GLW / Intro Game slot manager. The DEV client now supports invite-token access against the hosted token service, but it is still not real authentication and saves remain browser-local.
 
-True one-time tester tokens require a server-side redemption record or hosted token ledger. This static build only remembers access locally in one browser.
+v0.41.87 is the next planning/docs-only pass for the future multiplayer architecture. It does not add multiplayer code yet and it does not change gameplay or the current token-service runtime.
 
-The v0.41.84 invite-token architecture plan lives in `INVITE_TOKEN_ACCESS_PLAN.md`. Until a hosted token service exists, the current static gate remains the default.
+v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQL is draft-only and has not been applied.
+
+v0.41.90 adds the standalone game-service skeleton under `game-service/`. It exposes read-only health and schema checks only and is not wired to the client yet.
+
+True one-time tester tokens require a server-side redemption record or hosted token ledger. The client now stores the resulting access grant locally in one browser after redeeming a valid invite token.
+
+The invite-token access plan lives in `INVITE_TOKEN_ACCESS_PLAN.md`. The DEV client uses the hosted invite-token service, while the static development codes remain as a local fallback.
+
+The multiplayer architecture plan lives in:
+
+- `MULTIPLAYER_ARCHITECTURE_PLAN.md`
+- `MULTIPLAYER_API_CONTRACT_DRAFT.md`
+- `MULTIPLAYER_SCHEMA_DRAFT.md`
+- `supabase/multiplayer/`
 
 The Phase 2 endpoint contract lives in `INVITE_TOKEN_ENDPOINT_CONTRACT.md`.
 
-The Supabase service skeleton for that future phase now lives in `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/`. It is not wired into the game client yet.
+The Supabase service skeleton for that phase now lives in `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/`. The DEV client now redeems invite tokens against that hosted service.
 
-v0.41.84 is token-service infrastructure work, not a game-client integration pass. The current runtime game remains v0.41.83.
+v0.41.86 is the invite-token hardening pass for the DEV client. The current runtime game remains the same local prototype behaviour.
+v0.41.87 will be a planning-only multiplayer architecture pass.
 
 For hosted play, the server must become authoritative for:
 
@@ -87,4 +101,4 @@ Random game outcomes should be resolved server-side or through deterministic see
 
 ## Version
 
-Current handoff version: v0.41.83
+Current handoff version: v0.41.86

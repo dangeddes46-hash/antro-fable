@@ -1,14 +1,27 @@
-# AntrophAI v0.41.83 GLW handoff build
+# AntrophAI v0.41.86 GLW handoff build
 
 This package is a clean local prototype handoff for the single-player Godlike Warfare (GLW) test build of AntrophAI.
 
-v0.41.83 keeps the browser-local tester gate and slot manager, and polishes the launcher wording for clearer GLW / Intro Game static testing.
+v0.41.86 hardens the DEV invite-token gate while keeping the browser-local tester fallback and slot manager for trusted development testing.
 
-Planning note: v0.41.84 invite-token access architecture is documented in `INVITE_TOKEN_ACCESS_PLAN.md`. The current static gate remains the default until a hosted token service exists.
+v0.41.87 is a planning/docs-only multiplayer architecture pass. It does not change gameplay, does not add multiplayer code, and does not add a schema migration yet.
 
-Phase 2 contract note: `INVITE_TOKEN_ENDPOINT_CONTRACT.md` defines the hosted redemption endpoint shape and ledger rules for the future token service.
+v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQL is draft-only and has not been applied.
 
-Supabase skeleton note: `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/` now sketch the server-side pieces for the future invite-token flow without wiring them into the client yet.
+v0.41.90 adds the first standalone multiplayer game-service skeleton under `game-service/`. It is read-only, does not mutate multiplayer state yet, and is not wired to the client yet.
+
+Planning note: `INVITE_TOKEN_ACCESS_PLAN.md` documents the invite-token access rollout, including the hosted DEV path and the remaining static fallback codes.
+
+Multiplayer planning notes:
+
+- `MULTIPLAYER_ARCHITECTURE_PLAN.md`
+- `MULTIPLAYER_API_CONTRACT_DRAFT.md`
+- `MULTIPLAYER_SCHEMA_DRAFT.md`
+- `supabase/multiplayer/`
+
+Phase 2 contract note: `INVITE_TOKEN_ENDPOINT_CONTRACT.md` defines the hosted redemption endpoint shape and ledger rules for the token service.
+
+Supabase skeleton note: `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/` sketch the server-side pieces for the invite-token flow that the DEV client now redeems against.
 
 ## Scope
 

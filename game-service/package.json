@@ -1,0 +1,21 @@
+{
+  "name": "antrophai-game-service",
+  "private": true,
+  "version": "0.41.90",
+  "description": "Standalone multiplayer game-service skeleton for AntrophAI v0.41.90",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "check": "node --check src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  }
+}
