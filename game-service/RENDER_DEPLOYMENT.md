@@ -1,4 +1,4 @@
-# Render deployment - AntrophAI game-service skeleton
+# Render deployment - AntrophAI game-service dev seed/read proof
 
 Deploy this folder as a separate Render Web Service.
 
@@ -6,7 +6,7 @@ Deploy this folder as a separate Render Web Service.
 
 - Service type: `Web Service`
 - Repository: `dangeddes46-hash/antrophai_GLWTest`
-- Branch: `dev-multiplayer-game-service-skeleton-v04190`
+- Branch: `dev-multiplayer-dev-seed-read-v04191`
 - Root Directory: `game-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -19,6 +19,7 @@ Set these in Render:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ALLOWED_ORIGINS`
 - `GAME_SERVICE_ENV=production`
+- `ENABLE_DEV_ENDPOINTS=true` for temporary DEV proof runs only
 
 Do not commit the service role key. Keep it in Render only.
 
@@ -44,9 +45,10 @@ If Supabase credentials are missing or incorrect, `/api/schema-status` should fa
 
 ## Phase note
 
-This is the first skeleton only.
+This is the first proof-only service step.
 
 - No browser wiring yet.
 - No gameplay mutations yet.
 - No tick runner yet.
 - No `/state` action API yet.
+- Disable or remove the dev endpoints before any public multiplayer testing.

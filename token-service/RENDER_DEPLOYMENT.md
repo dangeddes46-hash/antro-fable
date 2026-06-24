@@ -2,8 +2,8 @@
 
 This guide covers the standalone `token-service/` Render Web Service for the future invite-token phase.
 
-The game client is still not wired to this service yet.
-The current runtime game remains v0.41.83.
+The game client is now wired to this service for DEV invite-token access.
+The current runtime game remains v0.41.86.
 This deployment work is token-service infrastructure only.
 
 ## 1) Create the Render service
@@ -11,7 +11,7 @@ This deployment work is token-service infrastructure only.
 Create a new **Render Web Service** and point it at:
 
 - Repository: `https://github.com/dangeddes46-hash/antrophai_GLWTest.git`
-- Branch: `dev-token-service-render-ready-v04184`
+- Branch: `dev-invite-token-hardening-v04186`
 - Root Directory: `token-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -136,7 +136,7 @@ insert into public.invite_tokens (
 ```powershell
 $body = @{
   token = 'ANTROPHAI-RENDER-DUMMY-001'
-  clientBuild = 'v0.41.84'
+  clientBuild = 'v0.41.86'
   clientNonce = 'render-smoke-test'
   testerComment = 'Render smoke test'
 } | ConvertTo-Json
@@ -173,7 +173,7 @@ Expected:
 ```powershell
 $revalidateBody = @{
   grantId = $redeem.accessGrant.grantId
-  clientBuild = 'v0.41.84'
+  clientBuild = 'v0.41.86'
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method Post -Uri "$base/revalidate" -ContentType 'application/json' -Body $revalidateBody

@@ -1,10 +1,12 @@
 # AntrophAI invite-token access plan
 
-Status: v0.41.84 planning and design note
+Status: v0.41.86 rollout note
 
 ## Purpose
 
 This document describes the safest practical path from the current browser-local tester gate to a future invite-token model.
+
+v0.41.87 planning note: the invite-token grant is also the first bridge toward future multiplayer player identity. It still remains access limiting, not DRM, and it still does not make the browser authoritative for gameplay.
 
 The current static build is still the source of truth for gameplay. This note is only about access control and tester pool management.
 
@@ -12,7 +14,8 @@ The current static build is still the source of truth for gameplay. This note is
 
 The current gate:
 
-- accepts a small allowlist of local tester codes
+- accepts a small allowlist of local tester codes as a fallback
+- redeems hosted invite tokens in the DEV client
 - stores the accepted state in browser localStorage
 - skips the gate on later visits in the same browser/origin
 - keeps the GLW and Intro Game local saves separate from the access flag
@@ -135,7 +138,7 @@ Do not export secret token values.
 
 - Add the Supabase-backed token ledger and atomic redemption RPC
 - Add the service skeleton behind the contract
-- Add front-end redemption flow later, when the client is ready
+- The DEV client now includes the front-end redemption flow.
 - Keep fallback static test codes only for local development
 
 Use the endpoint contract in `INVITE_TOKEN_ENDPOINT_CONTRACT.md` as the source of truth for request/response fields and failure handling.
@@ -145,6 +148,7 @@ Use the endpoint contract in `INVITE_TOKEN_ENDPOINT_CONTRACT.md` as the source o
 - Add admin token list / revoke / export tools
 - Add tester labels to debug export
 - Remove shared static codes from the public tester build
+- Use the invite-token grant as the bridge to future multiplayer player identity, but keep gameplay authority on the server
 
 ## Risks and tradeoffs
 
@@ -159,4 +163,4 @@ Keep the current static prototype unchanged for gameplay and saves.
 
 Document the future token service now.
 
-When hosted token infrastructure is ready, switch the public tester flow to the redemption endpoint and keep the local static codes only as a development fallback.
+When hosted token infrastructure is ready, the public tester flow can use the redemption endpoint while the local static codes remain a development fallback.

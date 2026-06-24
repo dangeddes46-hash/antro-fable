@@ -12,6 +12,7 @@ Current runtime note:
 - The current hosted token service at https://antrophai-glwtest-passkey.onrender.com is the proof point for the Browser -> Render -> Supabase pattern.
 - Local GLW/IG prototype mode still uses browser localStorage for saves.
 - Future multiplayer access should keep player identity and access-link history in separate records.
+- The hosted game-service skeleton now has temporary dev seed/read proof endpoints for v0.41.91.
 
 ## Core principle
 
@@ -198,11 +199,12 @@ Safe sequence:
 1. v0.41.87: planning/docs only
 2. v0.41.88: Supabase multiplayer schema skeleton, review-only SQL files, no client use
 3. v0.41.90: game-service skeleton with `/health`, `/api/version`, `/api/schema-status`
-4. v0.41.91: invite-token grant creates or links a player
-5. v0.41.92: client can load shared player state read-only
-6. v0.41.93: first server-side economy action, e.g. build factories
-7. v0.41.94: manual server tick updates shared player state
-8. v0.41.95+: rankings, messages, alliances, attacks
+4. v0.41.91: dev-only seed/read proof endpoints for canonical multiplayer DEV records
+5. v0.41.92: invite-token grant creates or links a player
+6. v0.41.93: client can load shared player state read-only
+7. v0.41.94: first server-side economy action, e.g. build factories
+8. v0.41.95: manual server tick updates shared player state
+9. v0.41.96+: rankings, messages, alliances, attacks
 9. Later: missiles, LRC, and full war systems
 
 Do not attempt full multiplayer in one leap.

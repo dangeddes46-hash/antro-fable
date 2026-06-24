@@ -19,7 +19,15 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.83";
+const PROTOTYPE_VERSION = "v0.41.86";
+const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
+const INVITE_TOKEN_SERVICE_HOST = (() => {
+  try {
+    return INVITE_TOKEN_SERVICE_URL ? new URL(INVITE_TOKEN_SERVICE_URL).host : null;
+  } catch {
+    return null;
+  }
+})();
 const ADMIN_ROUND_SLOT_KEY = "admin-start-local";
 const TESTER_ACCESS_KEY = "antrophaiTesterAccessAccepted";
 const TESTER_ACCESS_ALLOWLIST = {
@@ -1207,11 +1215,46 @@ function safeReadRoundSlotIndex() { const index = safeLoadStorageKey(ROUND_SLOT_
 function safeWriteRoundSlotIndex(index = []) { safeWriteStorageKey(ROUND_SLOT_INDEX_KEY, Array.isArray(index) ? index : []); }
 function upsertRoundSlotIndexEntry(index = [], entry = {}) { const key = entry.slotKey; if (!key) return Array.isArray(index) ? index : []; const without = (Array.isArray(index) ? index : []).filter((item) => item?.slotKey !== key); return [{ ...entry, savedAt: entry.savedAt || Date.now() }, ...without].slice(0, 20); }
 function safeDeleteRoundSlot(slotKey) { try { if (typeof window !== "undefined") window.localStorage.removeItem(roundSlotSaveKey(slotKey)); } catch {} }
+function normaliseAccessGrant(value) {
+  if (!value || typeof value !== "object") return null;
+  const grantId = cleanSingleLineText(String(value.grantId || value.currentGrantId || "").trim(), 128);
+  if (!grantId) return null;
+  const currentGrantId = cleanSingleLineText(String(value.currentGrantId || grantId).trim(), 128) || grantId;
+  const tokenId = cleanSingleLineText(String(value.tokenId || "").trim(), 128) || null;
+  const testerLabel = cleanSingleLineText(String(value.testerLabel || "").trim(), 128) || null;
+  const tokenHashPrefix = cleanSingleLineText(String(value.tokenHashPrefix || "").trim(), 32) || null;
+  const issuedAt = cleanSingleLineText(String(value.issuedAt || "").trim(), 64) || null;
+  const expiresAt = cleanSingleLineText(String(value.expiresAt || "").trim(), 64) || null;
+  const lastRevalidatedAt = cleanSingleLineText(String(value.lastRevalidatedAt || "").trim(), 64) || null;
+  return {
+    grantId,
+    currentGrantId,
+    tokenId,
+    testerLabel,
+    tokenHashPrefix,
+    issuedAt,
+    expiresAt,
+    lastRevalidatedAt,
+    accessMode: "invite-token",
+  };
+}
 function normaliseTesterAccessRecord(value) {
   if (!value || typeof value !== "object" || !value.accepted) return null;
   const codeLabel = typeof value.codeLabel === "string" && value.codeLabel.trim() ? value.codeLabel.trim() : null;
   const acceptedAt = Number(value.acceptedAt || 0);
-  return { accepted: true, codeLabel, acceptedAt: Number.isFinite(acceptedAt) && acceptedAt > 0 ? acceptedAt : null };
+  const accessGrant = normaliseAccessGrant(value.accessGrant);
+  const accessMode = value.accessMode === "invite-token" || Boolean(accessGrant) ? "invite-token" : "development-fallback";
+  const testerLabel = typeof value.testerLabel === "string" && value.testerLabel.trim()
+    ? cleanSingleLineText(value.testerLabel.trim(), 128)
+    : accessGrant?.testerLabel || null;
+  return {
+    accepted: true,
+    accessMode,
+    codeLabel,
+    testerLabel,
+    acceptedAt: Number.isFinite(acceptedAt) && acceptedAt > 0 ? acceptedAt : null,
+    accessGrant,
+  };
 }
 function safeLoadTesterAccess() { return normaliseTesterAccessRecord(safeLoadStorageKey(TESTER_ACCESS_KEY)); }
 function safeWriteTesterAccess(payload) { safeWriteStorageKey(TESTER_ACCESS_KEY, payload); }
@@ -1220,7 +1263,43 @@ function testerAccessRecordForCode(code) {
   const entered = String(code || "").trim().toLowerCase();
   const codeLabel = TESTER_ACCESS_ALLOWLIST[entered];
   if (!codeLabel) return null;
-  return { accepted: true, codeLabel, acceptedAt: Date.now() };
+  return { accepted: true, accessMode: "development-fallback", codeLabel, testerLabel: null, acceptedAt: Date.now(), accessGrant: null };
+}
+function makeInviteTokenClientNonce() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `client-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+function inviteTokenFailureMessage(code) {
+  switch (code) {
+    case "empty_token":
+      return "Enter an invite token first.";
+    case "token_invalid":
+      return "This invite token was not recognised.";
+    case "token_claimed":
+      return "This invite token has already been claimed.";
+    case "token_revoked":
+      return "This invite token is no longer active.";
+    case "token_expired":
+      return "This invite token is no longer active.";
+    case "build_not_allowed":
+      return "This invite token is not available for this build.";
+    case "rate_limited":
+      return "Too many invite redemption attempts. Please try again later.";
+    case "service_unavailable":
+      return "The invite service could not be reached. Please try again later.";
+    default:
+      return "The invite token could not be redeemed.";
+  }
+}
+function testerAccessModeLabel(record) {
+  if (!record?.accepted) return "";
+  if (record.accessMode === "invite-token") {
+    const testerLabel = record.testerLabel || record.accessGrant?.testerLabel || "";
+    return testerLabel ? `Access: invite token | Tester: ${testerLabel}` : "Access: invite token";
+  }
+  return "Access: development fallback";
 }
 
 function retalWindowMsForSettings(settings) {
@@ -1538,7 +1617,9 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false);
   const [testerAccessRecord, setTesterAccessRecord] = useState(() => safeLoadTesterAccess());
   const [testerAccessDraft, setTesterAccessDraft] = useState("");
+  const [testerAccessCommentDraft, setTesterAccessCommentDraft] = useState("");
   const [testerAccessError, setTesterAccessError] = useState("");
+  const [testerAccessSubmitting, setTesterAccessSubmitting] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2203,33 +2284,112 @@ export default function App() {
     safeClearTesterAccess();
     setTesterAccessRecord(null);
     setTesterAccessDraft("");
+    setTesterAccessCommentDraft("");
     setTesterAccessError("");
+    setTesterAccessSubmitting(false);
   }
-  // TODO: True one-time tester tokens need a server-side redemption record or hosted token ledger. Static-only builds can only remember access locally per browser.
-  function submitTesterAccess() {
-    const record = testerAccessRecordForCode(testerAccessDraft);
-    if (!record) {
-      setTesterAccessError("That access code was not recognised.");
+  async function submitTesterAccess() {
+    if (testerAccessSubmitting) return;
+    const entered = String(testerAccessDraft || "").trim();
+    if (!entered) {
+      setTesterAccessError(inviteTokenFailureMessage("empty_token"));
       return;
     }
-    safeWriteTesterAccess(record);
-    setTesterAccessRecord(record);
-    setTesterAccessDraft("");
+
+    const staticRecord = testerAccessRecordForCode(entered);
+    if (staticRecord) {
+      safeWriteTesterAccess(staticRecord);
+      setTesterAccessRecord(staticRecord);
+      setTesterAccessDraft("");
+      setTesterAccessCommentDraft("");
+      setTesterAccessError("");
+      setTesterAccessSubmitting(false);
+      return;
+    }
+
+    if (!INVITE_TOKEN_SERVICE_URL) {
+      setTesterAccessError(inviteTokenFailureMessage("service_unavailable"));
+      return;
+    }
+
+    setTesterAccessSubmitting(true);
     setTesterAccessError("");
+
+    const clientNonce = makeInviteTokenClientNonce();
+    const testerComment = cleanMultiLineText(testerAccessCommentDraft || "", 1000);
+    const payload = {
+      token: entered,
+      clientBuild: PROTOTYPE_VERSION,
+      clientNonce,
+    };
+    if (testerComment) {
+      payload.testerComment = testerComment;
+    }
+
+    try {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
+      try {
+        const response = await fetch(`${INVITE_TOKEN_SERVICE_URL}/redeem`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller?.signal,
+        });
+        const text = await response.text();
+        let result = {};
+        if (text) {
+          try { result = JSON.parse(text); } catch { result = { raw: text }; }
+        }
+        if (!response.ok || result?.ok === false) {
+          const errorCode = result?.error?.code || (response.status === 409 ? "token_claimed" : response.status === 403 ? "token_revoked" : response.status === 404 ? "token_invalid" : response.status === 410 ? "token_expired" : response.status === 429 ? "rate_limited" : response.status >= 500 ? "service_unavailable" : "service_unavailable");
+          setTesterAccessError(inviteTokenFailureMessage(errorCode));
+          return;
+        }
+
+        const accessGrant = normaliseAccessGrant(result?.accessGrant || result?.grant || null);
+        if (!accessGrant) {
+          setTesterAccessError("The invite service returned an incomplete access grant.");
+          return;
+        }
+
+        const record = {
+          accepted: true,
+          accessMode: "invite-token",
+          codeLabel: null,
+          testerLabel: accessGrant.testerLabel || null,
+          acceptedAt: Date.now(),
+          accessGrant,
+        };
+        safeWriteTesterAccess(record);
+        setTesterAccessRecord(record);
+        setTesterAccessDraft("");
+        setTesterAccessCommentDraft("");
+        setTesterAccessError("");
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      setTesterAccessError(inviteTokenFailureMessage("service_unavailable"));
+    } finally {
+      setTesterAccessSubmitting(false);
+    }
   }
   function renderTesterAccessGate() {
     return <div className="app-shell wording-modern species-lithi min-h-screen bg-black text-orange-400 font-mono p-3 flex items-center justify-center" style={{ backgroundImage: "radial-gradient(circle at top, #1b1208 0, #030100 38%, #000 100%)" }}>
       <div className="w-[min(96vw,760px)] border border-orange-800 bg-black/90 p-5 shadow-2xl">
         <style>{`.app-shell{--antro-bg:#050100;--antro-panel-bg:rgba(0,0,0,.82);--antro-panel-header-bg:#240b02;--antro-border:#9a4b08;--antro-accent:#ffb15c;--species-accent:var(--antro-accent);--species-border:var(--antro-border);--species-glow:rgba(255,120,32,.14)}.wording-modern.species-lithi{--species-accent:#b98536;--species-border:#6d4216;--species-glow:rgba(224,162,74,.16)}.wording-modern .antro-panel{border-color:var(--species-border);box-shadow:0 0 0 1px rgba(0,0,0,.8),0 0 28px var(--species-glow)}.wording-modern .antro-panel-title{border-color:var(--species-border);color:var(--species-accent)}.classic-btn{border:1px solid #9a4b08;background:#160701;color:#ffb15c;padding:4px 8px;font-size:14px}.classic-btn:hover{background:#321004;color:#ffe0b0}.species-art-frame{border-color:var(--species-border);box-shadow:inset 0 0 30px rgba(0,0,0,.35),0 0 20px var(--species-glow)}`}</style>
-        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Tester Access | {PROTOTYPE_VERSION}</p></div>
+        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Private tester access | {PROTOTYPE_VERSION}</p></div>
         <Panel title="Tester Access">
-          <p className="text-orange-200 mb-4">Enter your private tester access code. This static test build stores access locally in this browser.</p>
+          <p className="text-orange-200 mb-4">Invite tokens are the preferred way to access this tester build. Each invite token is single-use. Redeemed access is stored locally in this browser, and your game saves stay local too. Development fallback codes still work for internal testing. This limits access; it is not DRM.</p>
           <div className="max-w-md">
-            <label className="block text-orange-300 mb-1">Access code</label>
-            <input className="w-full bg-black border border-orange-900 text-orange-100 px-2 py-2" value={testerAccessDraft} placeholder="Access code" onChange={(e) => { setTesterAccessDraft(e.target.value); setTesterAccessError(""); }} onKeyDown={(e) => { if (e.key === "Enter") submitTesterAccess(); }} autoFocus />
+            <label className="block text-orange-300 mb-1">Invite token or development fallback code</label>
+            <input className="w-full bg-black border border-orange-900 text-orange-100 px-2 py-2" value={testerAccessDraft} placeholder="Invite token" onChange={(e) => { setTesterAccessDraft(e.target.value); setTesterAccessError(""); }} onKeyDown={(e) => { if (e.key === "Enter") submitTesterAccess(); }} autoFocus />
+            <label className="block text-orange-300 mb-1 mt-3">Tester comment (optional)</label>
+            <textarea className="w-full min-h-20 bg-black border border-orange-900 text-orange-100 px-2 py-2" value={testerAccessCommentDraft} placeholder="Optional note for the invite service" onChange={(e) => setTesterAccessCommentDraft(cleanMultiLineText(e.target.value, 1000))} />
             {testerAccessError ? <div className="text-red-300 mt-2">{testerAccessError}</div> : null}
-            <div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={submitTesterAccess}>Enter</button></div>
-            <div className="mt-4 text-xs text-orange-600 leading-relaxed">Tester access is a lightweight invite gate for trusted testers. It is not real authentication.</div>
+            <div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={submitTesterAccess} disabled={testerAccessSubmitting}>{testerAccessSubmitting ? "Checking..." : "Enter"}</button></div>
+            <div className="mt-4 text-xs text-orange-600 leading-relaxed">Trusted fallback codes remain for development use. Invite redemption is access limiting, not authentication.</div>
           </div>
         </Panel>
         <div className="mt-5 pt-3 border-t border-orange-950 text-xs text-orange-700 text-center">Local prototype only. No server account or login is created in this build.</div>
@@ -2258,6 +2418,10 @@ export default function App() {
       }
     } else { setEntryStage("glw"); setPlayerNameSetupComplete(false); setGlwRaceRegistered(false); setSelectedRoundKey("glw"); setRoundProfile("Godlike Warfare"); setRoundSettings(roundProfiles["Godlike Warfare"]); setGameName("Late War Test Round"); }
     setHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.title = `AntrophAI GLW Prototype ${PROTOTYPE_VERSION}`;
   }, []);
 
   useEffect(() => { if (!hydrated) return; const payload = currentSavePayload(); safeWriteSave(payload); if (activeRoundSlotKey) safeWriteRoundSlot(activeRoundSlotKey, roundSlotPayload(activeRoundSlotKey)); }, [hydrated, activeRoundSlotKey, playerNameSetupComplete, entryStage, selectedRoundKey, selectedSpeciesKey, glwSeedMode, glwRaceRegistered, page, adminMode, displayModel, log, worldReports, buildForm, trainForm, mineAllocation, factoryAllocation, buildSpeedFactor, useBarracksSpeedMinerals, pageCompletionNotice, scienceOrder, scienceLevels, roundProfile, roundSettings, gameName, roundStartedAt, selectedTargetName, disableTargetTurrets, spyTarget, spies, mercenaries, alliance, shareAllianceProfile, allianceShareEnabledMembers, allianceAnnouncementDraft, allianceSubPage, donateAllianceLandAmount, allianceBankBuildQty, allianceBankSpeedFactor, allianceBankDepositAmount, lrcCardsAmount, lrcEnergyAmount, lrcMineralName, lrcMineralAmount, lrcTargetType, lrcTargetName, activeLrcSequence, exploreHours, exploreCards, newsFilter, newsPage, battleLogPage, battleLogOpponent, botDifficulty, onlineSort, nexusMineralName, nexusMineralAmount, demoMemberName, diplomacyTargetType, diplomacyTargetName, activeWars, alliedStatuses, diplomacyRequests, retalRecords, grievances, battleReport, lastUpdateSummary, outgoingMissiles, incomingMissiles, messages, marketOrders, processedBattleKeys, player, demoOpponents]);
@@ -3837,6 +4001,7 @@ export default function App() {
   function currentDebugExportPayload(testerComment = "") {
     const now = Date.now();
     const debugPlayer = exportEntityForDebug({ ...player, raceKey: player.race, alliance: alliance?.name || "None" });
+    const debugAccessGrant = normaliseAccessGrant(testerAccessRecord?.accessGrant || null);
     return {
       schemaVersion: "antrophai-debug-export-v1",
       prototypeVersion: PROTOTYPE_VERSION,
@@ -3855,8 +4020,18 @@ export default function App() {
       },
       testerAccess: {
         accepted: Boolean(testerAccessRecord?.accepted),
+        accessMode: testerAccessRecord?.accepted ? (testerAccessRecord?.accessMode === "invite-token" ? "invite-token" : "development-fallback") : null,
         codeLabel: testerAccessRecord?.codeLabel || null,
-        acceptedAt: testerAccessRecord?.acceptedAt || null
+        testerLabel: testerAccessRecord?.testerLabel || debugAccessGrant?.testerLabel || null,
+        grantId: debugAccessGrant?.grantId || null,
+        tokenId: debugAccessGrant?.tokenId || null,
+        tokenHashPrefix: debugAccessGrant?.tokenHashPrefix || null,
+        issuedAt: debugAccessGrant?.issuedAt || null,
+        lastRevalidatedAt: debugAccessGrant?.lastRevalidatedAt || null,
+        acceptedAt: testerAccessRecord?.acceptedAt || null,
+        inviteServiceUrl: INVITE_TOKEN_SERVICE_URL || null,
+        inviteServiceHost: INVITE_TOKEN_SERVICE_HOST || null,
+        accessGrant: debugAccessGrant
       },
       selected: { page, entryStage, selectedRoundKey, selectedSpeciesKey, activeRoundSlotKey, selectedTargetName, battleLogPage, battleLogOpponent, newsFilter, newsPage, onlineSort },
       roundSlots: {
@@ -5770,7 +5945,7 @@ export default function App() {
     const selectedDisplayName = selectedChoose.displayName || selectedSpecies.name;
     const shell = (children) => <div className={`app-shell wording-modern species-${selectedSpeciesKey} min-h-screen bg-black text-orange-400 font-mono p-3 flex items-center justify-center`} style={{ backgroundImage: "radial-gradient(circle at top, #1b1208 0, #030100 38%, #000 100%)" }}>
       <div className="w-[min(98vw,1180px)] border border-orange-800 bg-black/90 p-5 shadow-2xl"><style>{`.app-shell{--antro-bg:#050100;--antro-panel-bg:rgba(0,0,0,.82);--antro-panel-header-bg:#240b02;--antro-border:#9a4b08;--antro-accent:#ffb15c;--species-accent:var(--antro-accent);--species-border:var(--antro-border);--species-glow:rgba(255,120,32,.14)}.wording-modern.species-human{--species-accent:#d6a15d;--species-border:#a46b32;--species-glow:rgba(242,192,120,.16)}.wording-modern.species-trysaur{--species-accent:#c05a1a;--species-border:#8c2f0c;--species-glow:rgba(255,92,24,.18)}.wording-modern.species-relu{--species-accent:#8fc6d8;--species-border:#5f8792;--species-glow:rgba(141,210,232,.18)}.wording-modern.species-lithi{--species-accent:#b98536;--species-border:#6d4216;--species-glow:rgba(224,162,74,.16)}.wording-modern.species-zarth{--species-accent:#d77b2a;--species-border:#a9581b;--species-glow:rgba(242,129,45,.2)}.wording-modern .antro-panel{border-color:var(--species-border);box-shadow:0 0 0 1px rgba(0,0,0,.8),0 0 28px var(--species-glow)}.wording-modern .antro-panel-title{border-color:var(--species-border);color:var(--species-accent)}.classic-btn{border:1px solid #9a4b08;background:#160701;color:#ffb15c;padding:4px 8px;font-size:14px}.classic-btn:hover{background:#321004;color:#ffe0b0}.species-select{border-color:var(--species-border);box-shadow:0 0 18px var(--species-glow)}.species-art-frame{border-color:var(--species-border);box-shadow:inset 0 0 30px rgba(0,0,0,.35),0 0 20px var(--species-glow)}`}</style>
-        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">Tester access accepted · {PROTOTYPE_VERSION}</p></div>
+        <div className="text-center mb-5"><h1 className="text-4xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600 mt-1">{testerAccessModeLabel(testerAccessRecord)} · {PROTOTYPE_VERSION}</p></div>
         {children}
         <div className="mt-5 pt-3 border-t border-orange-950 text-xs text-orange-700 text-center">
           <div>Local prototype only. No server account or login is created in this build.</div>

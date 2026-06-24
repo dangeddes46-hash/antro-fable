@@ -1,6 +1,6 @@
 # AntrophAI token-service skeleton
 
-This folder contains the Supabase-backed invite-token service skeleton for the future hosted access flow.
+This folder contains the Supabase-backed invite-token service for the DEV invite-token access flow.
 
 It is intentionally separate from the React/Vite game client.
 It can run locally from `token-service/.env` or on Render from dashboard environment variables.
@@ -18,7 +18,7 @@ It can run locally from `token-service/.env` or on Render from dashboard environ
 - it does not replace the current browser-local tester gate
 - it does not change GLW gameplay
 - it does not add login, accounts, multiplayer, or shared saves
-- it does not wire directly into `src/App.jsx` yet
+- it does wire into the DEV client invite-token gate
 
 ## Files
 

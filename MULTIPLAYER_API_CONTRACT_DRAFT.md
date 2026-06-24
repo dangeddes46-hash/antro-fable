@@ -7,6 +7,17 @@ It is intentionally separate from the current browser-local prototype and separa
 
 v0.41.90 adds the first standalone game-service skeleton under `game-service/`. It only exposes read-only health and schema-check probes for now.
 
+v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/`. They are scaffolding, not normal gameplay endpoints, and should be removed or disabled before public multiplayer testing.
+
+## v0.41.91 dev proof endpoints
+
+These endpoints exist only to prove the hosted game service can write and read a tiny canonical multiplayer DEV state:
+
+- `POST /api/dev/seed-round`
+- `GET /api/dev/round-summary`
+
+They are not player action endpoints, they do not process ticks, and they are not part of the normal multiplayer gameplay contract.
+
 ## Common conventions
 
 - Content-Type: `application/json`
@@ -45,7 +56,7 @@ Response shape:
 {
   "ok": true,
   "service": "antrophai-game-service",
-    "version": "v0.41.90",
+    "version": "v0.41.91",
   "environment": "production",
   "databaseReady": true,
   "tickReady": true

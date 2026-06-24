@@ -32,6 +32,8 @@ v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQ
 
 v0.41.90 adds a read-only multiplayer game-service skeleton under `game-service/`. It does not mutate state or run ticks yet.
 
+v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/`. They are scaffolding and should be disabled or removed before public multiplayer testing.
+
 It does not:
 
 - add multiplayer code

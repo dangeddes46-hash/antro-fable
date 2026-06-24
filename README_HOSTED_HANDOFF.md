@@ -12,6 +12,8 @@ v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQ
 
 v0.41.90 adds the standalone game-service skeleton under `game-service/`. It exposes read-only health and schema checks only and is not wired to the client yet.
 
+v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/`. These prove the game service can write and read canonical multiplayer DEV records, but the client is still not wired and the endpoints are not normal gameplay.
+
 True one-time tester tokens require a server-side redemption record or hosted token ledger. The client now stores the resulting access grant locally in one browser after redeeming a valid invite token.
 
 The invite-token access plan lives in `INVITE_TOKEN_ACCESS_PLAN.md`. The DEV client uses the hosted invite-token service, while the static development codes remain as a local fallback.

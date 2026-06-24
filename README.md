@@ -10,6 +10,8 @@ v0.41.88 adds reviewable multiplayer Supabase schema skeleton files only. The SQ
 
 v0.41.90 adds the first standalone multiplayer game-service skeleton under `game-service/`. It is read-only, does not mutate multiplayer state yet, and is not wired to the client yet.
 
+v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/` so the hosted service can create and read a tiny canonical multiplayer DEV state. The client is still not wired.
+
 Planning note: `INVITE_TOKEN_ACCESS_PLAN.md` documents the invite-token access rollout, including the hosted DEV path and the remaining static fallback codes.
 
 Multiplayer planning notes:

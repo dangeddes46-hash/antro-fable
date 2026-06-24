@@ -1,12 +1,12 @@
 # AntrophAI invite-token endpoint contract
 
-Status: v0.41.84 Phase 2 contract
+Status: v0.41.86 Phase 2 contract
 
 ## Purpose
 
 This contract defines the minimal hosted invite-token service needed to support one-time invite redemption for the current static AntrophAI prototype.
 
-The game itself remains static-hosted and browser-local. Saves remain in browser localStorage. This service only handles access control and token lifecycle.
+The game itself remains static-hosted and browser-local. Saves remain in browser localStorage. This service only handles access control and token lifecycle. The DEV client now stores the resulting access grant locally after redeeming a valid invite token.
 
 Implementation note: the current branch now includes a Supabase service skeleton in `token-service/` plus the implementation guide in `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md`.
 The token service can be hosted separately on Render; the game client is still not wired to it yet.
@@ -75,7 +75,7 @@ Request body:
 ```json
 {
   "token": "raw-token-entered-by-user",
-  "clientBuild": "v0.41.84",
+  "clientBuild": "v0.41.86",
   "clientNonce": "browser-generated-random-id",
   "testerComment": ""
 }
@@ -154,7 +154,7 @@ Request body:
 {
   "grantId": "grant_xxx",
   "tokenId": "tok_xxx",
-  "clientBuild": "v0.41.84",
+  "clientBuild": "v0.41.86",
   "clientNonce": "browser-generated-random-id"
 }
 ```
