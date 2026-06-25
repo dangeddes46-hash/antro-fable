@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.93";
+const PROTOTYPE_VERSION = "v0.41.94";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1318,6 +1318,10 @@ function multiplayerDevActionFailureMessage(status, errorCode) {
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return "DEV Player One was not found in the shared round.";
   if (errorCode === "player_not_joined") return "DEV Player One is not joined to the shared round.";
+  if (errorCode === "tick_in_progress") return "A manual DEV tick is already running.";
+  if (errorCode === "queue_build_factory_failed") return "The factory order could not be queued.";
+  if (errorCode === "manual_tick_failed") return "The manual DEV tick could not be completed.";
+  if (errorCode === "build_factory_failed") return "The legacy immediate proof could not be completed.";
   if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
     return "Shared multiplayer service could not be reached.";
   }
@@ -1643,7 +1647,7 @@ export default function App() {
   const [testerAccessError, setTesterAccessError] = useState("");
   const [testerAccessSubmitting, setTesterAccessSubmitting] = useState(false);
   const [multiplayerPreviewState, setMultiplayerPreviewState] = useState({ loading: false, error: "", fetchedAt: null, summary: null });
-  const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null });
+  const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2312,7 +2316,7 @@ export default function App() {
     setTesterAccessError("");
     setTesterAccessSubmitting(false);
     setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
-    setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null });
+    setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
   }
   async function refreshMultiplayerPreview() {
     if (multiplayerPreviewState.loading) return;
@@ -2352,8 +2356,11 @@ export default function App() {
 
         const summary = {
           round: result?.round || null,
-          players: Array.isArray(result?.players) ? result.players : [],
+          players: Array.isArray(result?.players) ? result.players.map((player) => ({ ...player, factoryCount: Number(player?.factoryCount ?? 0) })) : [],
           recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
+          recentActions: Array.isArray(result?.recentActions) ? result.recentActions : [],
+          recentTickLogs: Array.isArray(result?.recentTickLogs) ? result.recentTickLogs : [],
+          actionSummary: result?.actionSummary || null,
         };
         setMultiplayerPreviewState({ loading: false, error: "", fetchedAt, summary });
       } finally {
@@ -2363,7 +2370,7 @@ export default function App() {
       setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
     }
   }
-  async function submitMultiplayerDevBuildFactory() {
+  async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage }) {
     if (multiplayerDevActionState.loading) return;
     if (!testerAccessRecord?.accepted) return;
     if (!GAME_SERVICE_URL) {
@@ -2372,8 +2379,9 @@ export default function App() {
         loading: false,
         error: multiplayerDevActionFailureMessage(503, "service_unavailable"),
         lastActionAt: attemptedAt,
-        lastActionType: "dev_build_factory",
+        lastActionType: actionType,
         lastActionResult: null,
+        lastActionMessage: null,
       });
       return;
     }
@@ -2384,14 +2392,10 @@ export default function App() {
       const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
       try {
-        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/actions/build-factory`, {
+        const response = await fetch(`${GAME_SERVICE_URL}${endpointPath}`, {
           method: "POST",
           headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify({
-            roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-            displayName: "DEV Player One",
-            amount: 1,
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller?.signal,
         });
         const text = await response.text();
@@ -2411,19 +2415,20 @@ export default function App() {
             loading: false,
             error: errorMessage,
             lastActionAt: attemptedAt,
-            lastActionType: "dev_build_factory",
+            lastActionType: actionType,
             lastActionResult: null,
+            lastActionMessage: null,
           });
           return;
         }
 
-        const action = result?.action || null;
         setMultiplayerDevActionState({
           loading: false,
           error: "",
           lastActionAt: attemptedAt,
-          lastActionType: action?.type || "dev_build_factory",
-          lastActionResult: action,
+          lastActionType: actionType,
+          lastActionResult: result,
+          lastActionMessage: result?.message || successMessage,
         });
         refreshMultiplayerPreview();
       } finally {
@@ -2434,10 +2439,45 @@ export default function App() {
         loading: false,
         error: multiplayerDevActionFailureMessage(503, "service_unavailable"),
         lastActionAt: attemptedAt,
-        lastActionType: "dev_build_factory",
+        lastActionType: actionType,
         lastActionResult: null,
+        lastActionMessage: null,
       });
     }
+  }
+  async function submitMultiplayerDevQueueBuildFactory() {
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/actions/queue-build-factory",
+      actionType: "dev_queue_build_factory",
+      requestBody: {
+        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+        displayName: "DEV Player One",
+        amount: 1,
+      },
+      successMessage: "Factory build order queued for next tick.",
+    });
+  }
+  async function submitMultiplayerDevManualTick() {
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/tick/manual-run",
+      actionType: "dev_manual_tick",
+      requestBody: {
+        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+      },
+      successMessage: "Manual tick processed.",
+    });
+  }
+  async function submitMultiplayerDevBuildFactory() {
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/actions/build-factory",
+      actionType: "dev_build_factory",
+      requestBody: {
+        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+        displayName: "DEV Player One",
+        amount: 1,
+      },
+      successMessage: "Legacy immediate proof applied.",
+    });
   }
   async function submitTesterAccess() {
     if (testerAccessSubmitting) return;
@@ -4203,12 +4243,16 @@ export default function App() {
         multiplayerPreviewRoundKey: multiplayerPreviewState.summary?.round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY,
         multiplayerPreviewRoundId: multiplayerPreviewState.summary?.round?.id || null,
         multiplayerPreviewPlayerCount: Array.isArray(multiplayerPreviewState.summary?.players) ? multiplayerPreviewState.summary.players.length : 0,
+        multiplayerPreviewActionSummary: multiplayerPreviewState.summary?.actionSummary || null,
+        multiplayerPreviewRecentActions: Array.isArray(multiplayerPreviewState.summary?.recentActions) ? multiplayerPreviewState.summary.recentActions : [],
+        multiplayerPreviewRecentTickLogs: Array.isArray(multiplayerPreviewState.summary?.recentTickLogs) ? multiplayerPreviewState.summary.recentTickLogs : [],
         multiplayerPreviewError: multiplayerPreviewState.error || null,
       },
       lastMultiplayerDevActionAt: multiplayerDevActionState.lastActionAt || null,
       lastMultiplayerDevActionAtIso: multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toISOString() : null,
       lastMultiplayerDevActionType: multiplayerDevActionState.lastActionType || null,
       lastMultiplayerDevActionResult: multiplayerDevActionState.lastActionResult || null,
+      lastMultiplayerDevActionMessage: multiplayerDevActionState.lastActionMessage || null,
       lastMultiplayerPreviewError: multiplayerPreviewState.error || null,
       currentRoundSummary: {
         version: PROTOTYPE_VERSION,
@@ -6275,6 +6319,9 @@ export default function App() {
       const round = summary?.round || null;
       const players = Array.isArray(summary?.players) ? summary.players : [];
       const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
+      const recentActions = Array.isArray(summary?.recentActions) ? summary.recentActions : [];
+      const recentTickLogs = Array.isArray(summary?.recentTickLogs) ? summary.recentTickLogs : [];
+      const actionSummary = summary?.actionSummary || null;
       const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
       const roundName = round?.roundName || "Shared Multiplayer DEV";
       const roundStatus = round?.status || "Unknown";
@@ -6282,11 +6329,10 @@ export default function App() {
       const roundId = round?.id || "—";
       const lastFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not fetched yet";
       const lastDevActionLabel = multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toLocaleString() : "Never";
+      const primaryPlayer = players.find((player) => String(player?.displayName || "").toLowerCase() === "dev player one") || players[0] || null;
+      const primaryFactoryCount = Number(primaryPlayer?.factoryCount ?? 0);
       const playerSummary = (player = {}) => {
         const state = player.state || {};
-        const buildingRows = Array.isArray(player.buildings) ? player.buildings : [];
-        const factoryRow = buildingRows.find((row) => String(row?.buildingKey || "").toLowerCase() === "factory");
-        const factoryCount = Number(factoryRow?.effectiveCount ?? factoryRow?.count ?? 0);
         return {
           title: player.displayName || "Unknown player",
           testerLabel: player.testerLabel || "",
@@ -6296,14 +6342,16 @@ export default function App() {
           land: fmt(Number(state.land || 0)),
           power: compactFmt(Number(state.power || 0)),
           money: compactFmt(Number(state.money || 0)),
-          buildingSummary: `Factory: ${fmt(Math.max(0, Math.floor(factoryCount || 0)))}`,
+          factoryCount: fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0)))),
         };
       };
       return <Panel title="Shared Multiplayer DEV">
-        <p className="text-orange-200 mb-3">Shared Multiplayer DEV preview from the hosted game service with one small DEV proof action. The browser can inspect this shared round, and the button below asks the service to make the canonical change.</p>
+        <p className="text-orange-200 mb-3">The browser queues an order. The server applies it only when the DEV tick runs. This is a multiplayer timing proof, not final building gameplay.</p>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading}>{multiplayerPreviewState.loading ? "Refreshing preview..." : "Refresh preview"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading ? "Sending server order..." : "DEV order: build +1 factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing order..." : "Queue +1 factory order"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_build_factory" ? "Running legacy proof..." : "Legacy immediate proof: build +1 factory"}</button>
           <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Server-authorised proof</span>
           <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{GAME_SERVICE_URL || "Game service unavailable"}</span>
         </div>
@@ -6315,15 +6363,23 @@ export default function App() {
           ["Round name", roundName],
           ["Status", roundStatus],
           ["Current tick", currentTick],
+          ["Primary factory count", fmt(primaryFactoryCount)],
+          ["Queued rows", fmt(Number(actionSummary?.queued ?? 0))],
+          ["Processed rows", fmt(Number(actionSummary?.processed ?? 0))],
+          ["Failed rows", fmt(Number(actionSummary?.failed ?? 0))],
+          ["Due now", fmt(Number(actionSummary?.dueNow ?? 0))],
           ["Players", fmt(players.length)],
+          ["Recent actions", fmt(recentActions.length)],
+          ["Recent tick logs", fmt(recentTickLogs.length)],
           ["Last fetch", lastFetchLabel],
           ["Last dev action", multiplayerDevActionState.lastActionType || "None"],
           ["Last dev action at", lastDevActionLabel],
+          ["Last dev message", multiplayerDevActionState.lastActionMessage || "None"],
         ]} />
         {multiplayerPreviewState.loading ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer preview...</div> : null}
         {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
         {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
-        {multiplayerDevActionState.lastActionResult ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">Server built +{multiplayerDevActionState.lastActionResult.amount || 1} factory. Factory count is now {multiplayerDevActionState.lastActionResult.newCount ?? "—"}.</div> : null}
+        {multiplayerDevActionState.lastActionMessage ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerDevActionState.lastActionMessage}</div> : null}
         {!multiplayerPreviewState.loading && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
         {players.length ? <div className="mt-3 grid gap-2">
           {players.map((player) => {
@@ -6335,7 +6391,29 @@ export default function App() {
               </div>
               <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
               <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
-              {details.buildingSummary ? <div className="text-xs text-orange-700 mt-1">Buildings: {details.buildingSummary}</div> : null}
+              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount}</div>
+            </div>;
+          })}
+        </div> : null}
+        {recentActions.length ? <div className="mt-3 grid gap-2">
+          {recentActions.map((action) => {
+            const result = action.resultSummary || null;
+            return <div key={action.id} className="border border-orange-950 bg-black/50 p-2">
+              <div className="text-[10px] uppercase tracking-wide text-orange-600">Request tick {action.requestedTick ?? "—"} · Execute after {action.executeAfterTick ?? "—"} · {action.status || "unknown"}</div>
+              <div className="font-bold text-orange-200 mt-1">{action.actionType || "Action"}</div>
+              {result ? <div className="text-xs text-orange-200 mt-1">Factory: {result.oldCount ?? "—"} {"->"} {result.newCount ?? "—"} · Amount: {result.amount ?? "—"} · Tick: {result.tick ?? "—"}</div> : null}
+              {action.errorMessage ? <div className="text-xs text-red-300 mt-1">{action.errorMessage}</div> : null}
+            </div>;
+          })}
+        </div> : null}
+        {recentTickLogs.length ? <div className="mt-3 grid gap-2">
+          {recentTickLogs.map((tickLog) => {
+            const tickSummary = tickLog.summary || {};
+            return <div key={tickLog.id} className="border border-orange-950 bg-black/50 p-2">
+              <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {tickLog.tick ?? "—"} · {tickLog.status || "unknown"}</div>
+              <div className="font-bold text-orange-200 mt-1">Manual DEV tick</div>
+              <div className="text-xs text-orange-200 mt-1">Processed: {tickSummary.processedTotal ?? tickSummary.processed_total ?? 0} · Factory builds: {tickSummary.factoryBuilds ?? tickSummary.factory_builds ?? 0} · Failed: {tickSummary.failedTotal ?? tickSummary.failed_total ?? 0}</div>
+              {tickLog.errorMessage ? <div className="text-xs text-red-300 mt-1">{tickLog.errorMessage}</div> : null}
             </div>;
           })}
         </div> : null}

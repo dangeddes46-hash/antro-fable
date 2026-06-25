@@ -1,4 +1,4 @@
-# AntrophAI prototype rules - v0.41.93
+# AntrophAI prototype rules - v0.41.94
 
 ## Round profile
 
@@ -16,7 +16,7 @@ v0.41.90 adds a separate game-service skeleton under `game-service/`. It is read
 
 v0.41.92 adds a read-only Shared Multiplayer DEV preview in the launcher. It is a browser-facing inspection panel only and must not be treated as multiplayer gameplay.
 
-v0.41.93 adds a dev-only server-authorised build-factory proof in the Shared Multiplayer DEV panel. It is temporary scaffolding for testing the browser -> service -> Supabase authority path and must not be treated as final building gameplay.
+v0.41.94 adds a dev-only queued action and manual tick proof in the Shared Multiplayer DEV panel. It is temporary scaffolding for testing the browser -> service -> Supabase authority path and must not be treated as final building gameplay.
 
 Keep these worlds separate:
 

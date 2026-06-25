@@ -1,4 +1,4 @@
-# Render deployment - AntrophAI game-service dev seed/read/build-action proof
+# Render deployment - AntrophAI game-service dev seed/read/queued-action/manual-tick proof
 
 Deploy this folder as a separate Render Web Service.
 
@@ -6,7 +6,7 @@ Deploy this folder as a separate Render Web Service.
 
 - Service type: `Web Service`
 - Repository: `dangeddes46-hash/antrophai_GLWTest`
-- Branch: `dev-multiplayer-build-action-proof-v04193`
+- Branch: `dev-multiplayer-manual-tick-proof-v04194`
 - Root Directory: `game-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -41,6 +41,23 @@ Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/version
 Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/schema-status
 Invoke-RestMethod "https://antrophai-game-service-dev.onrender.com/api/dev/round-summary?roundKey=shared-dev-001"
 
+Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/actions/queue-build-factory" -ContentType "application/json" -Body (@{
+  roundKey = "shared-dev-001"
+  displayName = "DEV Player One"
+  amount = 1
+} | ConvertTo-Json)
+
+Invoke-RestMethod "https://antrophai-game-service-dev.onrender.com/api/dev/round-summary?roundKey=shared-dev-001"
+
+Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/tick/manual-run" -ContentType "application/json" -Body (@{
+  roundKey = "shared-dev-001"
+} | ConvertTo-Json)
+
+```
+
+Optional legacy comparison only:
+
+```powershell
 Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/actions/build-factory" -ContentType "application/json" -Body (@{
   roundKey = "shared-dev-001"
   displayName = "DEV Player One"
@@ -51,15 +68,17 @@ Invoke-RestMethod "https://antrophai-game-service-dev.onrender.com/api/dev/round
 ```
 
 If Supabase credentials are missing or incorrect, `/api/schema-status` should fail clearly rather than exposing secrets.
-The build-action proof should return `ok: true` and report the old and new factory counts for `DEV Player One`.
-After the action, the round summary should show `Factory: 1` for `DEV Player One` and a recent `dev_build_factory` event.
+The queued-action proof should return `ok: true`, keep the round tick unchanged, and report the requested queue timing for `DEV Player One`.
+The manual tick proof should return `ok: true` and advance the round tick by one while applying due queued actions.
+After the queue and tick, the round summary should show the updated factory count for `DEV Player One`, a recent `dev_order_queued` event, a recent `dev_build_factory_processed` event, and compact action/tick-log rows.
 
 ## Phase note
 
 This is the first proof-only service step.
 
 - No browser wiring yet for general multiplayer gameplay.
-- The build-factory proof is dev-only scaffolding, not final building gameplay.
-- No tick runner yet.
+- The build-factory proof remains legacy scaffolding, not final building gameplay.
+- The queued-action/manual-tick proof is dev-only scaffolding, not final building gameplay.
+- No automatic tick loop yet.
 - No `/state` action API yet.
 - Disable or remove the dev endpoints before any public multiplayer testing.

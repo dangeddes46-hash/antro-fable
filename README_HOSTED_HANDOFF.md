@@ -1,4 +1,4 @@
-# Hosted handoff notes - AntrophAI v0.41.93
+# Hosted handoff notes - AntrophAI v0.41.94
 
 ## Read this first
 
@@ -8,7 +8,7 @@ v0.41.86 keeps the browser-local GLW / Intro Game slot manager. The DEV client n
 
 v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview. It reads hosted round-summary data from the game service and does not write multiplayer state from the browser.
 
-v0.41.93 adds the first dev-only server-authorised multiplayer action proof. The browser can ask the game service to build +1 factory for DEV Player One, and the server mutates the canonical multiplayer tables.
+v0.41.94 adds the first dev-only queued action and manual tick proof. The browser can queue +1 factory for DEV Player One, and the hosted game service mutates the canonical multiplayer tables only when a manual DEV tick runs.
 
 v0.41.87 is the next planning/docs-only pass for the future multiplayer architecture. It does not add multiplayer code yet and it does not change gameplay or the current token-service runtime.
 
@@ -107,4 +107,4 @@ Random game outcomes should be resolved server-side or through deterministic see
 
 ## Version
 
-Current handoff version: v0.41.93
+Current handoff version: v0.41.94

@@ -11,7 +11,9 @@ v0.41.91 adds temporary dev-only seed/read proof endpoints under `game-service/`
 
 v0.41.92 adds a browser-side read-only launcher preview that consumes `GET /api/dev/round-summary`. It is inspection-only and does not write multiplayer state or call Supabase directly.
 
-v0.41.93 adds the first dev-only server-authorised multiplayer action proof: `POST /api/dev/actions/build-factory`. It is scaffolding for testing the browser -> service -> Supabase authority path and is not final building gameplay.
+v0.41.93 adds the first dev-only server-authorised multiplayer action proof: `POST /api/dev/actions/build-factory`. It remains legacy immediate proof scaffolding for testing the browser -> service -> Supabase authority path and is not final building gameplay.
+
+v0.41.94 adds the first dev-only queued action and manual tick proof: `POST /api/dev/actions/queue-build-factory` queues the order, and `POST /api/dev/tick/manual-run` applies due queued actions on the server tick.
 
 ## v0.41.91 dev proof endpoints
 
@@ -22,7 +24,7 @@ These endpoints exist only to prove the hosted game service can write and read a
 
 They are not player action endpoints, they do not process ticks, and they are not part of the normal multiplayer gameplay contract.
 
-## v0.41.93 dev proof action endpoint
+## v0.41.93 legacy immediate proof endpoint
 
 This endpoint exists only to prove that the hosted game service can accept a browser order, validate the round/player pair, and write one canonical multiplayer DEV change.
 
@@ -102,6 +104,120 @@ Suggested auth placeholder for the draft:
 
 That token could later be derived from the invite-token flow or a fuller account system.
 
+## v0.41.94 dev queued action endpoint
+
+This endpoint exists only to prove that the hosted game service can accept a browser order, queue it on the canonical action table, and leave it pending until the next manual tick.
+
+- `POST /api/dev/actions/queue-build-factory`
+
+Request body:
+
+```json
+{
+  "roundKey": "shared-dev-001",
+  "displayName": "DEV Player One",
+  "amount": 1
+}
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "action": {
+    "id": "action_xxx",
+    "type": "dev_queue_build_factory",
+    "status": "queued",
+    "buildingKey": "factory",
+    "amount": 1,
+    "requestedTick": 0,
+    "executeAfterTick": 1
+  },
+  "round": {
+    "roundKey": "shared-dev-001",
+    "previousTick": 0,
+    "currentTick": 0
+  },
+  "player": {
+    "displayName": "DEV Player One"
+  },
+  "message": "Build order queued for next tick."
+}
+```
+
+Auth/access requirements:
+
+- temporary DEV-only access
+- `ENABLE_DEV_ENDPOINTS=true`
+
+Validation responsibilities:
+
+- ensure the round exists
+- ensure the named player exists and is joined to the round
+- validate the requested amount is an integer between 1 and 10
+- write the action queue row, round event, and audit row in Supabase
+- never accept browser-side direct Supabase writes
+
+What to log:
+
+- round id and player id
+- requested amount and queue timing
+- action queue id and event/audit ids
+- any validation failure reason
+
+## v0.41.94 manual tick endpoint
+
+This endpoint exists only to prove that the hosted game service can advance a round tick manually and apply due queued actions on the server.
+
+- `POST /api/dev/tick/manual-run`
+
+Request body:
+
+```json
+{
+  "roundKey": "shared-dev-001"
+}
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "round": {
+    "roundKey": "shared-dev-001",
+    "previousTick": 0,
+    "currentTick": 1
+  },
+  "processed": {
+    "total": 1,
+    "factoryBuilds": 1
+  },
+  "message": "Manual tick processed."
+}
+```
+
+Auth/access requirements:
+
+- temporary DEV-only access
+- `ENABLE_DEV_ENDPOINTS=true`
+
+Validation responsibilities:
+
+- ensure the round exists
+- create or resume the tick log row using schema-compatible statuses
+- apply queued `dev_queue_build_factory` rows that are due for the next tick
+- update the authoritative current tick on the round
+- write round events and audit rows without exposing secrets
+
+What to log:
+
+- round id and tick transition
+- queued action ids processed or failed
+- resulting factory counts
+- tick log id and any validation failure reason
+
 ## GET /health
 
 Purpose:
@@ -118,7 +234,7 @@ Response shape:
 {
   "ok": true,
   "service": "antrophai-game-service",
-  "version": "v0.41.93",
+  "version": "v0.41.94",
   "environment": "production",
   "databaseReady": true,
   "tickReady": true

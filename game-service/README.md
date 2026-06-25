@@ -1,4 +1,4 @@
-# AntrophAI v0.41.93 game-service dev seed/read/build-action proof
+# AntrophAI v0.41.94 game-service dev seed/read/queued-action/manual-tick proof
 
 This folder contains the first standalone multiplayer game-service proof for AntrophAI.
 
@@ -21,7 +21,9 @@ Important:
 - `GET /api/schema-status`
 - `POST /api/dev/seed-round` when dev endpoints are enabled
 - `GET /api/dev/round-summary` when dev endpoints are enabled
-- `POST /api/dev/actions/build-factory` when dev endpoints are enabled
+- `POST /api/dev/actions/build-factory` when dev endpoints are enabled for legacy immediate proof
+- `POST /api/dev/actions/queue-build-factory` when dev endpoints are enabled
+- `POST /api/dev/tick/manual-run` when dev endpoints are enabled
 
 ## Local setup
 
@@ -63,7 +65,7 @@ Important:
 
 If Supabase is not configured locally, `/health` still starts cleanly and `/api/schema-status` returns a useful configuration error. The proof action endpoint fails cleanly with a dev-endpoints-disabled or Supabase-configured error instead of writing directly from the browser.
 
-The dev seed/read endpoints are temporary scaffolding. Keep them disabled for any public multiplayer test unless a specific DEV proof run requires them.
+The dev seed/read endpoints and the queue/manual-tick proof endpoints are temporary scaffolding. Keep them disabled for any public multiplayer test unless a specific DEV proof run requires them.
 
 ## Render deployment
 

@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.93';
+const SERVICE_VERSION = 'v0.41.94';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -136,7 +136,7 @@ app.get('/api/version', (req, res) => {
     localEnvLoaded: LOCAL_ENV_LOADED,
     supabaseConfigured: SUPABASE_CONFIGURED,
     devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
-    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints and the build-factory proof are temporary scaffolding.',
+    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints and the queued-action/manual-tick proof are temporary scaffolding.',
     timestamp: nowIso(),
   });
 });
@@ -205,10 +205,97 @@ app.get('/api/dev/round-summary', requireDevEndpoints, async (req, res) => {
       round: summary.round,
       players: summary.players,
       recentEvents: summary.recentEvents,
+      recentActions: summary.recentActions,
+      recentTickLogs: summary.recentTickLogs,
+      actionSummary: summary.actionSummary,
       timestamp: nowIso(),
     });
   } catch (error) {
     sendErrorResponse(res, error, 'round_summary_failed');
+  }
+});
+
+app.post('/api/dev/actions/queue-build-factory', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev queue-build-factory endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevBuildFactoryInput(req.body || {});
+    const result = await queueDevFactoryAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: {
+        id: result.action.id,
+        type: 'dev_queue_build_factory',
+        status: result.action.status,
+        buildingKey: 'factory',
+        amount: result.amount,
+        requestedTick: result.requestedTick,
+        executeAfterTick: result.executeAfterTick,
+        payload: result.action.payload,
+        result: result.action.result,
+      },
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+      },
+      message: 'Build order queued for next tick.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'queue_build_factory_failed');
+  }
+});
+
+app.post('/api/dev/tick/manual-run', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev manual-run endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const tickInput = normalizeDevManualTickInput(req.body || {});
+    const result = await runManualDevTick(tickInput);
+
+    res.status(200).json({
+      ok: true,
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      processed: {
+        total: result.processed.total,
+        factoryBuilds: result.processed.factoryBuilds,
+      },
+      message: 'Manual tick processed.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'manual_tick_failed');
   }
 });
 
@@ -325,7 +412,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.93 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.94 game-service skeleton.',
   });
 });
 
@@ -478,6 +565,12 @@ function normalizeDevBuildFactoryInput(body) {
   };
 }
 
+function normalizeDevManualTickInput(body) {
+  return {
+    roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
+  };
+}
+
 function clampDevBuildAmount(value) {
   if (value === undefined || value === null || String(value).trim() === '') {
     return 1;
@@ -562,6 +655,16 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
+  const recentActions = await fetchRows(
+    'multiplayer_action_queue',
+    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+    (query) => query.eq('round_id', round.id).order('created_at', { ascending: false }).limit(8)
+  );
+  const recentTickLogs = await fetchRows(
+    'multiplayer_tick_log',
+    'id, round_id, tick, status, started_at, completed_at, summary, error_message, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).order('tick', { ascending: false }).limit(5)
+  );
   const recentEvents = await fetchRows(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
@@ -582,6 +685,16 @@ async function readDevRoundSummary(roundKey) {
         state: formatState(stateByPlayerId.get(player.id)),
         buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
         armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
+        factoryCount: Math.max(
+          0,
+          Math.floor(
+            Number(
+              (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.effective_count ??
+              (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.count ??
+              0
+            )
+          )
+        ),
       }))
       .sort((left, right) => {
         const leftTick = left.state?.tick ?? 0;
@@ -592,34 +705,41 @@ async function readDevRoundSummary(roundKey) {
 
         return left.displayName.localeCompare(right.displayName);
       }),
+    recentActions: recentActions.map(formatActionQueue),
+    recentTickLogs: recentTickLogs.map(formatTickLog),
+    actionSummary: summarizeActionQueueRows(recentActions, round.current_tick),
     recentEvents: recentEvents.map(formatEvent),
   };
 }
 
+function summarizeActionQueueRows(rows = [], currentTick = 0) {
+  const counts = rows.reduce((acc, row) => {
+    const key = row.status || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {
+    queued: 0,
+    processing: 0,
+    processed: 0,
+    failed: 0,
+    cancelled: 0,
+    unknown: 0,
+  });
+
+  return {
+    total: rows.length,
+    queued: counts.queued,
+    processing: counts.processing,
+    processed: counts.processed,
+    failed: counts.failed,
+    cancelled: counts.cancelled,
+    unknown: counts.unknown,
+    dueNow: rows.filter((row) => row.status === 'queued' && Number(row.execute_after_tick ?? 0) <= Number(currentTick ?? 0)).length,
+  };
+}
+
 async function buildDevFactoryAction(actionInput) {
-  const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
-    query.eq('round_key', actionInput.roundKey)
-  );
-
-  if (!round) {
-    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
-  }
-
-  const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
-    query.eq('display_name', actionInput.displayName)
-  );
-
-  if (!player) {
-    throw createServiceError(404, 'player_not_found', `DEV player ${actionInput.displayName} was not found in the shared round.`);
-  }
-
-  const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
-    query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
-  );
-
-  if (!playerRound) {
-    throw createServiceError(409, 'player_not_joined', `${actionInput.displayName} is not joined to the shared round.`);
-  }
+  const { round, player } = await loadDevRoundPlayerContext(actionInput);
 
   const idempotencyKey = actionInput.idempotencyKey || null;
   if (idempotencyKey) {
@@ -738,6 +858,389 @@ async function buildDevFactoryAction(actionInput) {
   };
 }
 
+async function queueDevFactoryAction(actionInput) {
+  const { round, player } = await loadDevRoundPlayerContext(actionInput);
+
+  const idempotencyKey = actionInput.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existingAction = await fetchSingleRow(
+      'multiplayer_action_queue',
+      'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_queue_build_factory').eq('idempotency_key', idempotencyKey)
+    );
+
+    if (existingAction) {
+      return {
+        round: formatRound(round),
+        player: formatPlayer(player),
+        previousTick: Number(round.current_tick || 0),
+        requestedTick: Number(existingAction.requested_tick ?? round.current_tick ?? 0),
+        executeAfterTick: Number(existingAction.execute_after_tick ?? Number(round.current_tick || 0) + 1),
+        amount: Number(existingAction.payload?.amount ?? actionInput.amount ?? 1),
+        action: formatActionQueue(existingAction),
+      };
+    }
+  }
+
+  const previousTick = Number(round.current_tick || 0);
+  const requestedTick = previousTick;
+  const executeAfterTick = previousTick + 1;
+  const amount = actionInput.amount;
+  const actionPayload = {
+    buildingKey: 'factory',
+    amount,
+  };
+  const queuedAt = nowIso();
+  const actionRow = await insertSingleRow('multiplayer_action_queue', {
+    round_id: round.id,
+    player_id: player.id,
+    action_type: 'dev_queue_build_factory',
+    status: 'queued',
+    requested_tick: requestedTick,
+    execute_after_tick: executeAfterTick,
+    payload: actionPayload,
+    result: null,
+    error_message: null,
+    idempotency_key: idempotencyKey,
+    processed_at: null,
+    updated_at: queuedAt,
+  });
+
+  try {
+    await insertSingleRow('multiplayer_round_events', {
+      round_id: round.id,
+      tick: requestedTick,
+      event_type: 'dev_order_queued',
+      visibility: 'public',
+      actor_player_id: player.id,
+      title: 'Build order queued',
+      body: `${player.display_name} queued an order to build ${amount} ${amount === 1 ? 'factory' : 'factories'}.`,
+      payload: {
+        actionQueueId: actionRow.id,
+        actionType: 'dev_queue_build_factory',
+        buildingKey: 'factory',
+        amount,
+        requestedTick,
+        executeAfterTick,
+      },
+    });
+
+    await insertSingleRow('multiplayer_audit_log', {
+      round_id: round.id,
+      player_id: player.id,
+      actor_type: 'dev',
+      event_type: 'dev_queue_build_factory',
+      event_data: {
+        round_id: round.id,
+        round_key: round.round_key,
+        player_id: player.id,
+        display_name: player.display_name,
+        action_queue_id: actionRow.id,
+        action_type: 'dev_queue_build_factory',
+        building_key: 'factory',
+        amount,
+        requested_tick: requestedTick,
+        execute_after_tick: executeAfterTick,
+      },
+    });
+  } catch (error) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unexpected queue-build-factory failure.',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    throw error;
+  }
+
+  return {
+    round: formatRound(round),
+    player: formatPlayer(player),
+    previousTick,
+    requestedTick,
+    executeAfterTick,
+    amount,
+    action: {
+      ...actionRow,
+      payload: actionPayload,
+      result: null,
+    },
+  };
+}
+
+async function runManualDevTick(tickInput) {
+  const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
+    query.eq('round_key', tickInput.roundKey)
+  );
+
+  if (!round) {
+    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
+  }
+
+  const previousTick = Number(round.current_tick || 0);
+  const nextTick = previousTick + 1;
+  const startedAt = nowIso();
+  const existingTickLog = await fetchSingleRow(
+    'multiplayer_tick_log',
+    'id, round_id, tick, status, started_at, completed_at, summary, error_message, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('tick', nextTick)
+  );
+
+  let tickLogRow = existingTickLog;
+  if (existingTickLog) {
+    if (existingTickLog.status === 'running') {
+      throw createServiceError(409, 'tick_in_progress', 'A manual DEV tick is already running for the next tick.');
+    }
+
+    if (existingTickLog.status === 'succeeded' || existingTickLog.status === 'replayed') {
+      return {
+        round: formatRound({ ...round, current_tick: nextTick }),
+        previousTick,
+        processed: {
+          total: Number(existingTickLog.summary?.processedTotal ?? existingTickLog.summary?.processed_total ?? 0),
+          factoryBuilds: Number(existingTickLog.summary?.factoryBuilds ?? existingTickLog.summary?.factory_builds ?? 0),
+        },
+      };
+    }
+
+    tickLogRow = await updateSingleRow('multiplayer_tick_log', {
+      status: 'running',
+      started_at: startedAt,
+      completed_at: null,
+      error_message: null,
+      summary: {
+        previousTick,
+        currentTick: nextTick,
+        resumed: true,
+      },
+      updated_at: startedAt,
+    }, (query) => query.eq('id', existingTickLog.id));
+  } else {
+    tickLogRow = await insertSingleRow('multiplayer_tick_log', {
+      round_id: round.id,
+      tick: nextTick,
+      status: 'running',
+      started_at: startedAt,
+      completed_at: null,
+      summary: {
+        previousTick,
+        currentTick: nextTick,
+        resumed: false,
+      },
+      error_message: null,
+      updated_at: startedAt,
+    });
+  }
+
+  const queuedActions = await fetchRows(
+    'multiplayer_action_queue',
+    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('action_type', 'dev_queue_build_factory').eq('status', 'queued').lte('execute_after_tick', nextTick).order('created_at', { ascending: true })
+  );
+
+  let processedTotal = 0;
+  let factoryBuilds = 0;
+  const processedActionIds = [];
+  const failedActionIds = [];
+
+  for (const action of queuedActions) {
+    const actionNow = nowIso();
+    try {
+      const actionAmount = clampDevBuildAmount(action.payload?.amount ?? 1);
+      const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
+        query.eq('id', action.player_id)
+      );
+
+      if (!player) {
+        throw createServiceError(404, 'player_not_found', 'Queued DEV action player was not found.');
+      }
+
+      const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
+        query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
+      );
+
+      if (!playerRound) {
+        throw createServiceError(409, 'player_not_joined', `${player.display_name} is not joined to the shared round.`);
+      }
+
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'processing',
+        updated_at: actionNow,
+      }, (query) => query.eq('id', action.id));
+
+      const buildingRow = await fetchSingleRow(
+        'multiplayer_player_buildings',
+        'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+        (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+      );
+      const oldCount = Math.max(0, Math.floor(Number(buildingRow?.count ?? 0)));
+      const newCount = oldCount + actionAmount;
+      const processedAt = nowIso();
+      const actionResult = {
+        actionType: 'dev_queue_build_factory',
+        buildingKey: 'factory',
+        amount: actionAmount,
+        oldCount,
+        newCount,
+        tick: nextTick,
+      };
+
+      await upsertRow('multiplayer_player_buildings', {
+        round_id: round.id,
+        player_id: player.id,
+        building_key: 'factory',
+        count: newCount,
+        effective_count: newCount,
+        updated_at: processedAt,
+      }, 'player_id,round_id,building_key');
+
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'processed',
+        result: actionResult,
+        error_message: null,
+        processed_at: processedAt,
+        updated_at: processedAt,
+      }, (query) => query.eq('id', action.id));
+
+      await insertSingleRow('multiplayer_round_events', {
+        round_id: round.id,
+        tick: nextTick,
+        event_type: 'dev_build_factory_processed',
+        visibility: 'public',
+        actor_player_id: player.id,
+        title: 'Factory order completed',
+        body: `${player.display_name} completed an order for ${actionAmount} ${actionAmount === 1 ? 'factory' : 'factories'}.`,
+        payload: {
+          actionQueueId: action.id,
+          ...actionResult,
+        },
+      });
+
+      await insertSingleRow('multiplayer_audit_log', {
+        round_id: round.id,
+        player_id: player.id,
+        actor_type: 'dev',
+        event_type: 'dev_build_factory_processed',
+        event_data: {
+          round_id: round.id,
+          round_key: round.round_key,
+          player_id: player.id,
+          display_name: player.display_name,
+          action_queue_id: action.id,
+          action_type: 'dev_queue_build_factory',
+          building_key: 'factory',
+          amount: actionAmount,
+          old_count: oldCount,
+          new_count: newCount,
+          tick: nextTick,
+        },
+      });
+
+      processedTotal += 1;
+      factoryBuilds += actionAmount;
+      processedActionIds.push(action.id);
+    } catch (error) {
+      failedActionIds.push(action.id);
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'failed',
+        error_message: error instanceof Error ? error.message : 'Unexpected manual tick failure.',
+        updated_at: nowIso(),
+      }, (query) => query.eq('id', action.id)).catch(() => {});
+
+      await insertSingleRow('multiplayer_audit_log', {
+        round_id: round.id,
+        player_id: action.player_id,
+        actor_type: 'dev',
+        event_type: 'dev_build_factory_failed',
+        event_data: {
+          round_id: round.id,
+          round_key: round.round_key,
+          action_queue_id: action.id,
+          action_type: 'dev_queue_build_factory',
+          requested_tick: action.requested_tick,
+          execute_after_tick: action.execute_after_tick,
+          error_message: error instanceof Error ? error.message : 'Unexpected manual tick failure.',
+        },
+      }).catch(() => {});
+    }
+  }
+
+  const completedAt = nowIso();
+  await updateSingleRow('multiplayer_rounds', {
+    current_tick: nextTick,
+    updated_at: completedAt,
+  }, (query) => query.eq('id', round.id));
+
+  const tickSummary = {
+    previousTick,
+    currentTick: nextTick,
+    processedTotal,
+    factoryBuilds,
+    failedTotal: failedActionIds.length,
+    processedActionIds,
+    failedActionIds,
+  };
+
+  await updateSingleRow('multiplayer_tick_log', {
+    status: 'succeeded',
+    completed_at: completedAt,
+    summary: tickSummary,
+    updated_at: completedAt,
+  }, (query) => query.eq('id', tickLogRow.id));
+
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    actor_type: 'dev',
+    event_type: 'dev_manual_tick',
+    event_data: {
+      round_id: round.id,
+      round_key: round.round_key,
+      previous_tick: previousTick,
+      current_tick: nextTick,
+      processed_total: processedTotal,
+      factory_builds: factoryBuilds,
+      failed_total: failedActionIds.length,
+      tick_log_id: tickLogRow.id,
+    },
+  });
+
+  return {
+    round: formatRound({ ...round, current_tick: nextTick }),
+    previousTick,
+    processed: {
+      total: processedTotal,
+      factoryBuilds,
+    },
+  };
+}
+
+async function loadDevRoundPlayerContext(actionInput) {
+  const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
+    query.eq('round_key', actionInput.roundKey)
+  );
+
+  if (!round) {
+    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
+  }
+
+  const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
+    query.eq('display_name', actionInput.displayName)
+  );
+
+  if (!player) {
+    throw createServiceError(404, 'player_not_found', `DEV player ${actionInput.displayName} was not found in the shared round.`);
+  }
+
+  const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
+    query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
+  );
+
+  if (!playerRound) {
+    throw createServiceError(409, 'player_not_joined', `${actionInput.displayName} is not joined to the shared round.`);
+  }
+
+  return { round, player, playerRound };
+}
+
 async function getOrCreateDevRound(seedInput) {
   const existing = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', seedInput.roundKey)
@@ -756,7 +1259,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.93 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.94 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -794,7 +1297,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.93 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.94 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1119,6 +1622,46 @@ function formatEvent(event) {
     body: event.body,
     payload: event.payload,
     createdAt: event.created_at,
+  };
+}
+
+function formatActionQueue(action) {
+  const payload = action.payload || {};
+  const result = action.result || {};
+  const amount = Number(result.amount ?? payload.amount ?? null);
+  const oldCount = Number(result.oldCount ?? result.old_count ?? payload.oldCount ?? payload.old_count ?? null);
+  const newCount = Number(result.newCount ?? result.new_count ?? payload.newCount ?? payload.new_count ?? null);
+
+  return {
+    id: action.id,
+    actionType: action.action_type,
+    status: action.status,
+    requestedTick: action.requested_tick,
+    executeAfterTick: action.execute_after_tick,
+    processedAt: action.processed_at,
+    createdAt: action.created_at,
+    errorMessage: action.error_message || null,
+    resultSummary: action.result ? {
+      actionType: result.actionType || result.action_type || action.action_type,
+      buildingKey: result.buildingKey || result.building_key || payload.buildingKey || payload.building_key || 'factory',
+      amount: Number.isFinite(amount) ? amount : null,
+      oldCount: Number.isFinite(oldCount) ? oldCount : null,
+      newCount: Number.isFinite(newCount) ? newCount : null,
+      tick: Number(result.tick ?? action.execute_after_tick ?? action.requested_tick ?? 0),
+    } : null,
+  };
+}
+
+function formatTickLog(row) {
+  return {
+    id: row.id,
+    tick: row.tick,
+    status: row.status,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    summary: row.summary || null,
+    errorMessage: row.error_message || null,
+    createdAt: row.created_at,
   };
 }
 
