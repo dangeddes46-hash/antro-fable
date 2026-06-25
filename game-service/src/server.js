@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.94';
+const SERVICE_VERSION = 'v0.41.95';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -55,6 +55,7 @@ const DEV_ROUND_DEFAULTS = {
 const DEV_SEED_EVENT_TYPE = 'dev_seed_created';
 const DEV_SEED_AUDIT_EVENT_TYPE = 'dev_seed_created';
 const DEV_PLAYER_MARKER_PREFIX = 'dev-seed';
+const DEV_PROOF_RESET_EVENT_TYPE = 'dev_proof_reset';
 
 const app = express();
 const corsOptions = {
@@ -136,7 +137,7 @@ app.get('/api/version', (req, res) => {
     localEnvLoaded: LOCAL_ENV_LOADED,
     supabaseConfigured: SUPABASE_CONFIGURED,
     devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
-    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints and the queued-action/manual-tick proof are temporary scaffolding.',
+    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints, the queued-action/manual-tick proof, and the proof-reset endpoint are temporary scaffolding.',
     timestamp: nowIso(),
   });
 });
@@ -205,9 +206,11 @@ app.get('/api/dev/round-summary', requireDevEndpoints, async (req, res) => {
       round: summary.round,
       players: summary.players,
       recentEvents: summary.recentEvents,
+      recentPublicEvents: summary.recentPublicEvents,
       recentActions: summary.recentActions,
       recentTickLogs: summary.recentTickLogs,
       actionSummary: summary.actionSummary,
+      roundSummary: summary.roundSummary,
       timestamp: nowIso(),
     });
   } catch (error) {
@@ -296,6 +299,47 @@ app.post('/api/dev/tick/manual-run', requireDevEndpoints, async (req, res) => {
     });
   } catch (error) {
     sendErrorResponse(res, error, 'manual_tick_failed');
+  }
+});
+
+app.post('/api/dev/reset-proof-round', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev reset-proof-round endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const resetInput = normalizeDevProofResetInput(req.body || {});
+    const result = await resetDevProofRound(resetInput);
+
+    res.status(200).json({
+      ok: true,
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+        factoryCount: result.player.factoryCount,
+      },
+      proofState: {
+        cancelledActionCount: result.cancelledActionCount,
+        resetTickLogCount: result.resetTickLogCount,
+      },
+      message: 'Shared DEV proof state reset.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'reset_proof_round_failed');
   }
 });
 
@@ -412,7 +456,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.94 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.95 game-service skeleton.',
   });
 });
 
@@ -571,6 +615,20 @@ function normalizeDevManualTickInput(body) {
   };
 }
 
+function normalizeDevProofResetInput(body) {
+  const roundKey = normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey);
+  const displayName = normalizeText(body.displayName || DEV_ROUND_DEFAULTS.displayName);
+
+  if (roundKey !== DEV_ROUND_DEFAULTS.roundKey || displayName !== DEV_ROUND_DEFAULTS.displayName) {
+    throw createServiceError(400, 'unsupported_proof_target', 'This reset endpoint only targets the shared DEV proof round for DEV Player One.');
+  }
+
+  return {
+    roundKey,
+    displayName,
+  };
+}
+
 function clampDevBuildAmount(value) {
   if (value === undefined || value === null || String(value).trim() === '') {
     return 1;
@@ -668,47 +726,63 @@ async function readDevRoundSummary(roundKey) {
   const recentEvents = await fetchRows(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
-    (query) => query.eq('round_id', round.id).order('created_at', { ascending: false }).limit(5)
+    (query) => query.eq('round_id', round.id).eq('visibility', 'public').order('created_at', { ascending: false }).limit(5)
   );
 
   const stateByPlayerId = new Map(states.map((state) => [state.player_id, state]));
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
+  const actionSummary = summarizeActionQueueRows(recentActions, round.current_tick);
+  const formattedPlayers = players
+    .map((player) => ({
+      id: player.id,
+      displayName: player.display_name,
+      testerLabel: player.tester_label,
+      state: formatState(stateByPlayerId.get(player.id)),
+      buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
+      armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
+      factoryCount: Math.max(
+        0,
+        Math.floor(
+          Number(
+            (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.effective_count ??
+            (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.count ??
+            0
+          )
+        )
+      ),
+    }))
+    .sort((left, right) => {
+      const leftTick = left.state?.tick ?? 0;
+      const rightTick = right.state?.tick ?? 0;
+      if (rightTick !== leftTick) {
+        return rightTick - leftTick;
+      }
+
+      return left.displayName.localeCompare(right.displayName);
+    });
+  const totalFactoryCount = formattedPlayers.reduce((sum, player) => sum + Number(player.factoryCount || 0), 0);
+  const recentPublicEventTitles = recentEvents.slice(0, 3).map((event) => event.title || event.event_type || 'Event');
 
   return {
     round: formatRound(round),
-    players: players
-      .map((player) => ({
-        id: player.id,
-        displayName: player.display_name,
-        testerLabel: player.tester_label,
-        state: formatState(stateByPlayerId.get(player.id)),
-        buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
-        armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
-        factoryCount: Math.max(
-          0,
-          Math.floor(
-            Number(
-              (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.effective_count ??
-              (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.count ??
-              0
-            )
-          )
-        ),
-      }))
-      .sort((left, right) => {
-        const leftTick = left.state?.tick ?? 0;
-        const rightTick = right.state?.tick ?? 0;
-        if (rightTick !== leftTick) {
-          return rightTick - leftTick;
-        }
-
-        return left.displayName.localeCompare(right.displayName);
-      }),
+    players: formattedPlayers,
     recentActions: recentActions.map(formatActionQueue),
     recentTickLogs: recentTickLogs.map(formatTickLog),
-    actionSummary: summarizeActionQueueRows(recentActions, round.current_tick),
+    recentPublicEvents: recentEvents.map(formatEvent),
     recentEvents: recentEvents.map(formatEvent),
+    actionSummary,
+    roundSummary: {
+      roundKey: round.round_key,
+      roundName: round.round_name,
+      roundStatus: round.status,
+      currentTick: Number(round.current_tick || 0),
+      playerCount: formattedPlayers.length,
+      factoryCount: totalFactoryCount,
+      queuedCount: actionSummary.queued,
+      processedCount: actionSummary.processed,
+      recentEventTitles: recentPublicEventTitles,
+    },
   };
 }
 
@@ -1213,6 +1287,132 @@ async function runManualDevTick(tickInput) {
   };
 }
 
+async function resetDevProofRound(resetInput) {
+  const { round, player } = await loadDevRoundPlayerContext(resetInput);
+  const resetAt = nowIso();
+  const previousTick = Number(round.current_tick || 0);
+  const factoryRow = await fetchSingleRow(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+  );
+  const previousFactoryCount = Math.max(
+    0,
+    Math.floor(Number(factoryRow?.effective_count ?? factoryRow?.count ?? 0))
+  );
+
+  await upsertRow('multiplayer_player_buildings', {
+    round_id: round.id,
+    player_id: player.id,
+    building_key: 'factory',
+    count: 0,
+    effective_count: 0,
+    updated_at: resetAt,
+  }, 'player_id,round_id,building_key');
+
+  const queuedActions = await fetchRows(
+    'multiplayer_action_queue',
+    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).in('status', ['queued', 'processing']).order('created_at', { ascending: true })
+  );
+  const cancelledActionIds = [];
+  for (const action of queuedActions) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'cancelled',
+      result: null,
+      error_message: 'Cancelled by dev proof reset.',
+      processed_at: null,
+      updated_at: resetAt,
+    }, (query) => query.eq('id', action.id));
+    cancelledActionIds.push(action.id);
+  }
+
+  const tickLogs = await fetchRows(
+    'multiplayer_tick_log',
+    'id, round_id, tick, status, started_at, completed_at, summary, error_message, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).order('tick', { ascending: true })
+  );
+  const resetTickLogIds = [];
+  for (const tickLog of tickLogs) {
+    if (Number(tickLog.tick ?? 0) <= 0) {
+      continue;
+    }
+
+    await updateSingleRow('multiplayer_tick_log', {
+      status: 'queued',
+      started_at: null,
+      completed_at: null,
+      summary: {
+        ...(tickLog.summary && typeof tickLog.summary === 'object' ? tickLog.summary : {}),
+        resetAt,
+        resetReason: 'dev_proof_reset',
+        previousStatus: tickLog.status || null,
+        previousStartedAt: tickLog.started_at || null,
+        previousCompletedAt: tickLog.completed_at || null,
+      },
+      error_message: null,
+      updated_at: resetAt,
+    }, (query) => query.eq('id', tickLog.id));
+    resetTickLogIds.push(tickLog.id);
+  }
+
+  await updateSingleRow('multiplayer_rounds', {
+    current_tick: 0,
+    updated_at: resetAt,
+  }, (query) => query.eq('id', round.id));
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: 0,
+    event_type: DEV_PROOF_RESET_EVENT_TYPE,
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Proof state reset',
+    body: `${player.display_name} reset the Shared Multiplayer DEV proof state. Queued proof actions were cancelled and the next manual tick will start again at tick 1.`,
+    payload: {
+      roundKey: round.round_key,
+      playerDisplayName: player.display_name,
+      previousTick,
+      resetTick: 0,
+      previousFactoryCount,
+      factoryCount: 0,
+      cancelledActionCount: cancelledActionIds.length,
+      resetTickLogCount: resetTickLogIds.length,
+    },
+  });
+
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: DEV_PROOF_RESET_EVENT_TYPE,
+    event_data: {
+      round_id: round.id,
+      round_key: round.round_key,
+      player_id: player.id,
+      display_name: player.display_name,
+      previous_tick: previousTick,
+      reset_tick: 0,
+      previous_factory_count: previousFactoryCount,
+      reset_factory_count: 0,
+      cancelled_action_ids: cancelledActionIds,
+      reset_tick_log_ids: resetTickLogIds,
+    },
+  });
+
+  return {
+    round: formatRound({ ...round, current_tick: 0 }),
+    player: {
+      ...formatPlayer(player),
+      factoryCount: 0,
+    },
+    previousTick,
+    cancelledActionCount: cancelledActionIds.length,
+    resetTickLogCount: resetTickLogIds.length,
+    previousFactoryCount,
+  };
+}
+
 async function loadDevRoundPlayerContext(actionInput) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', actionInput.roundKey)
@@ -1259,7 +1459,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.94 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.95 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1297,7 +1497,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.94 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.95 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {

@@ -15,6 +15,8 @@ v0.41.93 adds the first dev-only server-authorised multiplayer action proof: `PO
 
 v0.41.94 adds the first dev-only queued action and manual tick proof: `POST /api/dev/actions/queue-build-factory` queues the order, and `POST /api/dev/tick/manual-run` applies due queued actions on the server tick.
 
+v0.41.95 adds a proof-reset control: `POST /api/dev/reset-proof-round` clears only the shared DEV proof state for DEV Player One so the queue/manual-tick proof can be replayed safely.
+
 ## v0.41.91 dev proof endpoints
 
 These endpoints exist only to prove the hosted game service can write and read a tiny canonical multiplayer DEV state:
@@ -218,6 +220,64 @@ What to log:
 - resulting factory counts
 - tick log id and any validation failure reason
 
+## v0.41.95 dev proof reset endpoint
+
+This endpoint exists only to reset the shared DEV proof round for DEV Player One so the queued-action/manual-tick proof can be replayed safely without deleting the history rows.
+
+- `POST /api/dev/reset-proof-round`
+
+Request body:
+
+```json
+{
+  "roundKey": "shared-dev-001",
+  "displayName": "DEV Player One"
+}
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "round": {
+    "roundKey": "shared-dev-001",
+    "previousTick": 1,
+    "currentTick": 0
+  },
+  "player": {
+    "displayName": "DEV Player One",
+    "factoryCount": 0
+  },
+  "proofState": {
+    "cancelledActionCount": 1,
+    "resetTickLogCount": 1
+  },
+  "message": "Shared DEV proof state reset."
+}
+```
+
+Auth/access requirements:
+
+- temporary DEV-only access
+- `ENABLE_DEV_ENDPOINTS=true`
+
+Validation responsibilities:
+
+- ensure the shared DEV proof round exists
+- ensure the named player exists and is joined to the round
+- reset only the proof round tick counter and DEV Player One factory count
+- cancel queued or processing proof action rows safely instead of deleting them
+- mark proof tick-log rows ready for replay without deleting the history rows
+- write a public `dev_proof_reset` round event and an internal audit log row
+
+What to log:
+
+- round id, round key, and player id
+- previous tick and previous factory count
+- cancelled action ids and reset tick-log ids
+- event/audit ids and any validation failure reason
+
 ## GET /health
 
 Purpose:
@@ -234,7 +294,7 @@ Response shape:
 {
   "ok": true,
   "service": "antrophai-game-service",
-  "version": "v0.41.94",
+  "version": "v0.41.95",
   "environment": "production",
   "databaseReady": true,
   "tickReady": true

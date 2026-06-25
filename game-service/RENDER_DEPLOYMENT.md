@@ -1,4 +1,4 @@
-# Render deployment - AntrophAI game-service dev seed/read/queued-action/manual-tick proof
+# Render deployment - AntrophAI game-service dev seed/read/queued-action/manual-tick/reset proof
 
 Deploy this folder as a separate Render Web Service.
 
@@ -6,7 +6,7 @@ Deploy this folder as a separate Render Web Service.
 
 - Service type: `Web Service`
 - Repository: `dangeddes46-hash/antrophai_GLWTest`
-- Branch: `dev-multiplayer-manual-tick-proof-v04194`
+- Branch: `dev-multiplayer-proof-polish-v04195`
 - Root Directory: `game-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -53,6 +53,11 @@ Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender
   roundKey = "shared-dev-001"
 } | ConvertTo-Json)
 
+Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/reset-proof-round" -ContentType "application/json" -Body (@{
+  roundKey = "shared-dev-001"
+  displayName = "DEV Player One"
+} | ConvertTo-Json)
+
 ```
 
 Optional legacy comparison only:
@@ -78,7 +83,7 @@ This is the first proof-only service step.
 
 - No browser wiring yet for general multiplayer gameplay.
 - The build-factory proof remains legacy scaffolding, not final building gameplay.
-- The queued-action/manual-tick proof is dev-only scaffolding, not final building gameplay.
+- The queued-action/manual-tick/reset proof is dev-only scaffolding, not final building gameplay.
 - No automatic tick loop yet.
 - No `/state` action API yet.
 - Disable or remove the dev endpoints before any public multiplayer testing.

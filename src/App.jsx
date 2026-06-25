@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.94";
+const PROTOTYPE_VERSION = "v0.41.95";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1319,9 +1319,11 @@ function multiplayerDevActionFailureMessage(status, errorCode) {
   if (errorCode === "player_not_found") return "DEV Player One was not found in the shared round.";
   if (errorCode === "player_not_joined") return "DEV Player One is not joined to the shared round.";
   if (errorCode === "tick_in_progress") return "A manual DEV tick is already running.";
+  if (errorCode === "unsupported_proof_target") return "The proof reset endpoint only targets the shared DEV proof round.";
   if (errorCode === "queue_build_factory_failed") return "The factory order could not be queued.";
   if (errorCode === "manual_tick_failed") return "The manual DEV tick could not be completed.";
   if (errorCode === "build_factory_failed") return "The legacy immediate proof could not be completed.";
+  if (errorCode === "reset_proof_round_failed") return "The DEV proof state could not be reset.";
   if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
     return "Shared multiplayer service could not be reached.";
   }
@@ -2358,9 +2360,11 @@ export default function App() {
           round: result?.round || null,
           players: Array.isArray(result?.players) ? result.players.map((player) => ({ ...player, factoryCount: Number(player?.factoryCount ?? 0) })) : [],
           recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
+          recentPublicEvents: Array.isArray(result?.recentPublicEvents) ? result.recentPublicEvents : [],
           recentActions: Array.isArray(result?.recentActions) ? result.recentActions : [],
           recentTickLogs: Array.isArray(result?.recentTickLogs) ? result.recentTickLogs : [],
           actionSummary: result?.actionSummary || null,
+          roundSummary: result?.roundSummary || null,
         };
         setMultiplayerPreviewState({ loading: false, error: "", fetchedAt, summary });
       } finally {
@@ -2465,6 +2469,18 @@ export default function App() {
         roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
       },
       successMessage: "Manual tick processed.",
+    });
+  }
+  async function submitMultiplayerDevResetProofRound() {
+    if (!confirm("Reset the Shared Multiplayer DEV proof round? This only resets the proof state for this browser-run round and cannot be undone.")) return;
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/reset-proof-round",
+      actionType: "dev_reset_proof_round",
+      requestBody: {
+        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+        displayName: "DEV Player One",
+      },
+      successMessage: "Shared DEV proof state reset.",
     });
   }
   async function submitMultiplayerDevBuildFactory() {
@@ -4240,11 +4256,13 @@ export default function App() {
         gameServiceHost: (() => { try { return GAME_SERVICE_URL ? new URL(GAME_SERVICE_URL).host : null; } catch { return null; } })(),
         lastMultiplayerPreviewFetchAt: multiplayerPreviewState.fetchedAt || null,
         lastMultiplayerPreviewFetchAtIso: multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toISOString() : null,
+        multiplayerPreviewRoundSummary: multiplayerPreviewState.summary?.roundSummary || null,
         multiplayerPreviewRoundKey: multiplayerPreviewState.summary?.round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY,
         multiplayerPreviewRoundId: multiplayerPreviewState.summary?.round?.id || null,
         multiplayerPreviewPlayerCount: Array.isArray(multiplayerPreviewState.summary?.players) ? multiplayerPreviewState.summary.players.length : 0,
         multiplayerPreviewActionSummary: multiplayerPreviewState.summary?.actionSummary || null,
         multiplayerPreviewRecentActions: Array.isArray(multiplayerPreviewState.summary?.recentActions) ? multiplayerPreviewState.summary.recentActions : [],
+        multiplayerPreviewRecentPublicEvents: Array.isArray(multiplayerPreviewState.summary?.recentPublicEvents) ? multiplayerPreviewState.summary.recentPublicEvents : [],
         multiplayerPreviewRecentTickLogs: Array.isArray(multiplayerPreviewState.summary?.recentTickLogs) ? multiplayerPreviewState.summary.recentTickLogs : [],
         multiplayerPreviewError: multiplayerPreviewState.error || null,
       },
@@ -4253,6 +4271,9 @@ export default function App() {
       lastMultiplayerDevActionType: multiplayerDevActionState.lastActionType || null,
       lastMultiplayerDevActionResult: multiplayerDevActionState.lastActionResult || null,
       lastMultiplayerDevActionMessage: multiplayerDevActionState.lastActionMessage || null,
+      lastMultiplayerDevResetAt: multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? multiplayerDevActionState.lastActionAt || null : null,
+      lastMultiplayerDevResetAtIso: multiplayerDevActionState.lastActionType === "dev_reset_proof_round" && multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toISOString() : null,
+      lastMultiplayerDevResetResult: multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? multiplayerDevActionState.lastActionResult || null : null,
       lastMultiplayerPreviewError: multiplayerPreviewState.error || null,
       currentRoundSummary: {
         version: PROTOTYPE_VERSION,
@@ -6319,18 +6340,28 @@ export default function App() {
       const round = summary?.round || null;
       const players = Array.isArray(summary?.players) ? summary.players : [];
       const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
+      const recentPublicEvents = Array.isArray(summary?.recentPublicEvents) ? summary.recentPublicEvents : recentEvents;
       const recentActions = Array.isArray(summary?.recentActions) ? summary.recentActions : [];
       const recentTickLogs = Array.isArray(summary?.recentTickLogs) ? summary.recentTickLogs : [];
       const actionSummary = summary?.actionSummary || null;
-      const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
-      const roundName = round?.roundName || "Shared Multiplayer DEV";
-      const roundStatus = round?.status || "Unknown";
-      const currentTick = round?.currentTick ?? "—";
+      const roundSummary = summary?.roundSummary || null;
+      const roundKey = roundSummary?.roundKey || round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+      const roundName = roundSummary?.roundName || round?.roundName || "Shared Multiplayer DEV";
+      const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
+      const currentTick = roundSummary?.currentTick ?? round?.currentTick ?? "-";
       const roundId = round?.id || "—";
-      const lastFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not fetched yet";
+      const lastFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not refreshed yet";
       const lastDevActionLabel = multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toLocaleString() : "Never";
+      const playerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
+      const factoryCount = Number(roundSummary?.factoryCount ?? 0);
+      const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
+      const processedCount = Number(roundSummary?.processedCount ?? actionSummary?.processed ?? 0);
+      const recentEventTitles = Array.isArray(roundSummary?.recentEventTitles) && roundSummary.recentEventTitles.length ? roundSummary.recentEventTitles.join(" | ") : "None yet";
+      const actionBusy = multiplayerDevActionState.loading;
+      const previewBusy = multiplayerPreviewState.loading;
       const primaryPlayer = players.find((player) => String(player?.displayName || "").toLowerCase() === "dev player one") || players[0] || null;
       const primaryFactoryCount = Number(primaryPlayer?.factoryCount ?? 0);
+      const displayFactoryCount = roundSummary ? factoryCount : primaryFactoryCount;
       const playerSummary = (player = {}) => {
         const state = player.state || {};
         return {
@@ -6346,12 +6377,13 @@ export default function App() {
         };
       };
       return <Panel title="Shared Multiplayer DEV">
-        <p className="text-orange-200 mb-3">The browser queues an order. The server applies it only when the DEV tick runs. This is a multiplayer timing proof, not final building gameplay.</p>
+        <p className="text-orange-200 mb-3">Queue the order first. The manual tick applies due orders and advances the proof round. Reset clears only the shared DEV proof state so the sequence can be replayed.</p>
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading}>{multiplayerPreviewState.loading ? "Refreshing preview..." : "Refresh preview"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing order..." : "Queue +1 factory order"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual tick..." : "Run manual DEV tick"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_build_factory" ? "Running legacy proof..." : "Legacy immediate proof: build +1 factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={previewBusy || actionBusy}>{previewBusy ? "Refreshing preview..." : "Refresh preview"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing order..." : "Queue +1 factory order"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevResetProofRound} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? "Resetting proof state..." : "Reset proof state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_build_factory" ? "Running legacy proof..." : "Legacy immediate proof: build +1 factory"}</button>
           <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Server-authorised proof</span>
           <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{GAME_SERVICE_URL || "Game service unavailable"}</span>
         </div>
@@ -6359,28 +6391,25 @@ export default function App() {
         <OldTable rows={[
           ["Service", GAME_SERVICE_URL || "Not configured"],
           ["Round key", roundKey],
-          ["Round id", roundId],
           ["Round name", roundName],
           ["Status", roundStatus],
           ["Current tick", currentTick],
-          ["Primary factory count", fmt(primaryFactoryCount)],
-          ["Queued rows", fmt(Number(actionSummary?.queued ?? 0))],
-          ["Processed rows", fmt(Number(actionSummary?.processed ?? 0))],
-          ["Failed rows", fmt(Number(actionSummary?.failed ?? 0))],
+          ["Players", fmt(playerCount)],
+          ["Factory count", fmt(Math.max(0, Math.floor(displayFactoryCount)))],
+          ["Queued rows", fmt(queuedCount)],
+          ["Processed rows", fmt(processedCount)],
           ["Due now", fmt(Number(actionSummary?.dueNow ?? 0))],
-          ["Players", fmt(players.length)],
-          ["Recent actions", fmt(recentActions.length)],
-          ["Recent tick logs", fmt(recentTickLogs.length)],
-          ["Last fetch", lastFetchLabel],
+          ["Recent event titles", recentEventTitles],
+          ["Last refreshed", lastFetchLabel],
           ["Last dev action", multiplayerDevActionState.lastActionType || "None"],
           ["Last dev action at", lastDevActionLabel],
           ["Last dev message", multiplayerDevActionState.lastActionMessage || "None"],
         ]} />
-        {multiplayerPreviewState.loading ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer preview...</div> : null}
+        {previewBusy ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer preview...</div> : null}
         {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
         {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
         {multiplayerDevActionState.lastActionMessage ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerDevActionState.lastActionMessage}</div> : null}
-        {!multiplayerPreviewState.loading && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
+        {!previewBusy && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
         {players.length ? <div className="mt-3 grid gap-2">
           {players.map((player) => {
             const details = playerSummary(player);
@@ -6395,7 +6424,8 @@ export default function App() {
             </div>;
           })}
         </div> : null}
-        {recentActions.length ? <div className="mt-3 grid gap-2">
+        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent actions</div>
+        {recentActions.length ? <div className="mt-2 grid gap-2">
           {recentActions.map((action) => {
             const result = action.resultSummary || null;
             return <div key={action.id} className="border border-orange-950 bg-black/50 p-2">
@@ -6406,7 +6436,8 @@ export default function App() {
             </div>;
           })}
         </div> : null}
-        {recentTickLogs.length ? <div className="mt-3 grid gap-2">
+        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent tick logs</div>
+        {recentTickLogs.length ? <div className="mt-2 grid gap-2">
           {recentTickLogs.map((tickLog) => {
             const tickSummary = tickLog.summary || {};
             return <div key={tickLog.id} className="border border-orange-950 bg-black/50 p-2">
@@ -6417,8 +6448,9 @@ export default function App() {
             </div>;
           })}
         </div> : null}
-        {recentEvents.length ? <div className="mt-3 grid gap-2">
-          {recentEvents.map((event) => <div key={event.id} className="border border-orange-950 bg-black/50 p-2">
+        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent public events</div>
+        {recentPublicEvents.length ? <div className="mt-2 grid gap-2">
+          {recentPublicEvents.map((event) => <div key={event.id} className="border border-orange-950 bg-black/50 p-2">
             <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {event.tick ?? "—"} · {event.visibility || "unknown"}</div>
             <div className="font-bold text-orange-200 mt-1">{event.title || event.eventType || "Event"}</div>
             {event.body ? <div className="text-xs text-orange-200 mt-1 whitespace-pre-line">{event.body}</div> : null}

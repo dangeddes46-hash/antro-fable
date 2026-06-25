@@ -1,4 +1,4 @@
-# AntrophAI multiplayer architecture plan - v0.41.94
+# AntrophAI multiplayer architecture plan - v0.41.95
 
 Status: planning/docs only
 
@@ -7,14 +7,15 @@ It documents the target server-authoritative architecture for the next phase aft
 
 Current runtime note:
 
-- Current game client runtime remains v0.41.94.
+- Current game client runtime remains v0.41.95.
 - The invite-token service remains a separate access-control service.
 - The current hosted token service at https://antrophai-glwtest-passkey.onrender.com is the proof point for the Browser -> Render -> Supabase pattern.
 - Local GLW/IG prototype mode still uses browser localStorage for saves.
 - v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview that reads hosted round-summary data from the game service.
 - v0.41.94 adds the first dev-only queued action and manual tick proof: the browser queues +1 factory for DEV Player One and the hosted game service applies it on a manual DEV tick.
+- v0.41.95 adds a proof-reset control for the same DEV round so the queue/manual-tick sequence can be replayed safely without touching browser-local saves.
 - Future multiplayer access should keep player identity and access-link history in separate records.
-- The hosted game-service skeleton now has temporary dev seed/read proof endpoints for v0.41.91, the legacy build-factory proof endpoint for v0.41.93, and the queued-action/manual-tick proof endpoints for v0.41.94.
+- The hosted game-service skeleton now has temporary dev seed/read proof endpoints for v0.41.91, the legacy build-factory proof endpoint for v0.41.93, the queued-action/manual-tick proof endpoints for v0.41.94, and the proof-reset endpoint for v0.41.95.
 
 ## Core principle
 
@@ -205,12 +206,13 @@ Safe sequence:
 5. v0.41.92: read-only Shared Multiplayer DEV launcher preview
 6. v0.41.93: legacy dev-only server-authorised build-action proof
 7. v0.41.94: dev-only queued action and manual tick proof
-8. v0.41.95: invite-token grant creates or links a player
-9. v0.41.96: client can load shared player state read-only
-10. v0.41.97: first general server-side economy action, beyond the proof endpoint
-11. v0.41.98: manual server tick updates shared player state
-12. v0.41.99+: rankings, messages, alliances, attacks
-13. Later: missiles, LRC, and full war systems
+8. v0.41.95: dev-only proof reset control for the Shared Multiplayer DEV round
+9. v0.41.96: invite-token grant creates or links a player
+10. v0.41.97: client can load shared player state read-only
+11. v0.41.98: first general server-side economy action, beyond the proof endpoint
+12. v0.41.99: manual server tick updates shared player state
+13. v0.42.00+: rankings, messages, alliances, attacks
+14. Later: missiles, LRC, and full war systems
 
 Do not attempt full multiplayer in one leap.
 
