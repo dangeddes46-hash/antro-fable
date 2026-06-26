@@ -1315,7 +1315,8 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
 function multiplayerIdentityFailureMessage(status, errorCode) {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
   if (errorCode === "identity_not_provided") return "Provide an active invite-grant identity before resolving multiplayer access.";
-  if (errorCode === "grant_not_found") return "No active access link was found for that grant.";
+  if (errorCode === "grant_not_found" || errorCode === "invite_grant_not_found") return "No invite grant was found for that grant.";
+  if (errorCode === "invite_grant_not_active") return "That invite grant is not active.";
   if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
@@ -1327,7 +1328,8 @@ function multiplayerIdentityFailureMessage(status, errorCode) {
 function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
   if (errorCode === "identity_not_provided") return "Resolve multiplayer identity before sending a server-authorised proof action.";
-  if (errorCode === "grant_not_found") return "The multiplayer identity grant could not be found.";
+  if (errorCode === "grant_not_found" || errorCode === "invite_grant_not_found") return "The multiplayer identity grant could not be found.";
+  if (errorCode === "invite_grant_not_active") return "The multiplayer identity grant is not active.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

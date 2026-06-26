@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.96';
+const SERVICE_VERSION = 'v0.41.96b';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -44,6 +44,7 @@ const TABLES_TO_CHECK = [
   'multiplayer_action_queue',
   'multiplayer_tick_log',
   'multiplayer_round_events',
+  'invite_tokens',
 ];
 const DEV_ROUND_DEFAULTS = {
   roundKey: 'shared-dev-001',
@@ -84,6 +85,7 @@ app.use((req, res, next) => {
 app.get('/health', async (req, res) => {
   try {
     const roundCheck = await checkTableReachability('multiplayer_rounds');
+    const inviteTokensCheck = await checkTableReachability('invite_tokens');
     const dbReachable = roundCheck.reachable === undefined ? null : roundCheck.reachable;
 
     res.status(200).json({
@@ -96,9 +98,10 @@ app.get('/health', async (req, res) => {
       devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
       allowedOriginsConfigured: CONFIGURED_ALLOWED_ORIGINS.length > 0,
       allowedOriginsCount: ALLOWED_ORIGINS.size,
-      dbReachable,
+      dbReachable: dbReachable === null ? null : Boolean(dbReachable && inviteTokensCheck.reachable),
       schemaCheck: {
         multiplayer_rounds: roundCheck,
+        invite_tokens: inviteTokensCheck,
       },
       timestamp: nowIso(),
     });
@@ -116,6 +119,10 @@ app.get('/health', async (req, res) => {
       dbReachable: false,
       schemaCheck: {
         multiplayer_rounds: {
+          reachable: false,
+          error: 'health_check_failed',
+        },
+        invite_tokens: {
           reachable: false,
           error: 'health_check_failed',
         },
@@ -205,8 +212,11 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
 
     res.status(200).json({
       ok: true,
+      roundKey: result.round.round_key,
+      grantId: result.grantId || identityInput.grantId,
+      accessLinkCreated: Boolean(result.accessLinkCreated),
       identity: {
-        grantId: result.accessLink?.grant_id || identityInput.grantId,
+        grantId: result.grantId || result.accessLink?.grant_id || identityInput.grantId,
         resolvedFrom: result.resolvedFrom,
         roundKey: result.round.round_key,
         roundName: result.round.round_name,
@@ -1529,6 +1539,7 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
   }
 
   let accessLink = null;
+  let accessLinkCreated = false;
   let player = null;
   let resolvedFrom = 'display_name';
 
@@ -1539,21 +1550,43 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
       (query) => query.eq('grant_id', identityInput.grantId).eq('status', 'active')
     );
 
-    if (!accessLink) {
-      throw createServiceError(404, 'grant_not_found', 'No active access link was found for that grant id.');
+    if (accessLink) {
+      player = await fetchSingleRow(
+        'multiplayer_players',
+        'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+        (query) => query.eq('id', accessLink.player_id)
+      );
+
+      if (!player) {
+        throw createServiceError(404, 'player_not_found', 'The player linked to that access grant was not found.');
+      }
+
+      resolvedFrom = 'access_link';
+    } else {
+      const inviteGrantLookup = await fetchInviteGrantByGrantId(identityInput.grantId);
+      const inviteGrant = inviteGrantLookup.row;
+
+      if (!inviteGrant) {
+        throw createServiceError(404, 'invite_grant_not_found', 'No invite grant was found for that grant id.');
+      }
+
+      if (!isInviteGrantActive(inviteGrant)) {
+        throw createServiceError(404, 'invite_grant_not_active', 'The invite grant is not active.');
+      }
+
+      const inviteLabels = resolveInviteGrantLabels(inviteGrant, identityInput);
+      const playerResult = await getOrCreateInviteGrantPlayer(round.id, {
+        grantId: identityInput.grantId,
+        displayName: inviteLabels.displayName,
+        testerLabel: inviteLabels.testerLabel,
+      });
+      player = playerResult.row;
+      resolvedFrom = playerResult.created ? 'invite_grant_created' : 'invite_grant';
+
+      const accessLinkResult = await getOrCreateInviteGrantAccessLink(round.id, player.id, identityInput.grantId, inviteGrant);
+      accessLink = accessLinkResult.row;
+      accessLinkCreated = accessLinkResult.created;
     }
-
-    player = await fetchSingleRow(
-      'multiplayer_players',
-      'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
-      (query) => query.eq('id', accessLink.player_id)
-    );
-
-    if (!player) {
-      throw createServiceError(404, 'player_not_found', 'The player linked to that access grant was not found.');
-    }
-
-    resolvedFrom = 'invite_grant';
   } else {
     const displayName = normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName);
     const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || null);
@@ -1615,8 +1648,171 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
     player,
     playerRound,
     accessLink,
+    accessLinkCreated,
     resolvedFrom,
+    grantId: identityInput.grantId || accessLink?.grant_id || null,
   };
+}
+
+async function fetchInviteGrantByGrantId(grantId) {
+  const columns = 'id, grant_id, current_grant_id, claim_count, tester_label, token_prefix, status, claimed_at, revoked_at, expires_at, last_seen_at, claimed_client_build, min_client_build, created_at, updated_at';
+  const byCurrentGrantId = await fetchSingleRow(
+    'invite_tokens',
+    columns,
+    (query) => query.eq('current_grant_id', grantId)
+  );
+
+  if (byCurrentGrantId) {
+    return {
+      row: byCurrentGrantId,
+      matchedOn: 'current_grant_id',
+    };
+  }
+
+  const byGrantId = await fetchSingleRow(
+    'invite_tokens',
+    columns,
+    (query) => query.eq('grant_id', grantId)
+  );
+
+  if (byGrantId) {
+    return {
+      row: byGrantId,
+      matchedOn: 'grant_id',
+    };
+  }
+
+  return {
+    row: null,
+    matchedOn: null,
+  };
+}
+
+function isInviteGrantActive(inviteGrant) {
+  const status = String(inviteGrant?.status || '').trim().toLowerCase();
+  const claimCount = Math.max(0, Math.floor(Number(inviteGrant?.claim_count || 0)));
+  return (status === 'claimed' || status === 'active' || status === 'used') && claimCount > 0;
+}
+
+function resolveInviteGrantLabels(inviteGrant, identityInput = {}) {
+  return {
+    testerLabel: normalizeDevTesterLabel(inviteGrant?.tester_label || identityInput.testerLabel || identityInput.displayName),
+    displayName: normalizeDevDisplayName(inviteGrant?.tester_label || identityInput.displayName || identityInput.testerLabel),
+  };
+}
+
+async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
+  const grantId = normalizeText(identityInput.grantId || '');
+  const displayName = normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName);
+  const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || identityInput.displayName || null);
+  const playerColumns = 'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes';
+
+  const byGrantId = await fetchSingleRow(
+    'multiplayer_players',
+    playerColumns,
+    (query) => query.eq('created_from_grant_id', grantId).eq('status', 'active')
+  );
+
+  if (byGrantId) {
+    return {
+      row: byGrantId,
+      created: false,
+    };
+  }
+
+  if (testerLabel) {
+    const byTesterLabel = await fetchSingleRow(
+      'multiplayer_players',
+      playerColumns,
+      (query) => query.eq('tester_label', testerLabel).eq('status', 'active')
+    );
+
+    if (byTesterLabel) {
+      return {
+        row: byTesterLabel,
+        created: false,
+      };
+    }
+  }
+
+  const byDisplayName = await fetchSingleRow(
+    'multiplayer_players',
+    playerColumns,
+    (query) => query.eq('display_name', displayName).eq('status', 'active')
+  );
+
+  if (byDisplayName) {
+    return {
+      row: byDisplayName,
+      created: false,
+    };
+  }
+
+  const inserted = await insertSingleRow('multiplayer_players', {
+    display_name: displayName,
+    tester_label: testerLabel,
+    status: 'active',
+    created_from_grant_id: grantId,
+    notes: `v0.41.96b invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+  });
+
+  return {
+    row: inserted,
+    created: true,
+  };
+}
+
+async function getOrCreateInviteGrantAccessLink(roundId, playerId, grantId, inviteGrant) {
+  const columns = 'id, player_id, access_type, invite_token_id, grant_id, token_hash_prefix, provider, status, issued_at, revoked_at, created_at, updated_at, notes';
+  const existing = await fetchSingleRow(
+    'multiplayer_player_access_links',
+    columns,
+    (query) => query.eq('grant_id', grantId).eq('status', 'active')
+  );
+
+  if (existing) {
+    return {
+      row: existing,
+      created: false,
+    };
+  }
+
+  try {
+    const inserted = await insertSingleRow('multiplayer_player_access_links', {
+      player_id: playerId,
+      access_type: 'invite-token',
+      invite_token_id: null,
+      grant_id: grantId,
+      token_hash_prefix: normalizeText(inviteGrant?.token_prefix || '') || null,
+      provider: 'antrophai-token-service',
+      status: 'active',
+      issued_at: inviteGrant?.claimed_at || nowIso(),
+      revoked_at: null,
+      notes: `Linked automatically from invite grant for round ${roundId}.`,
+    });
+
+    return {
+      row: inserted,
+      created: true,
+    };
+  } catch (error) {
+    if (error && typeof error === 'object' && (error.code === '23505' || String(error.message || '').toLowerCase().includes('duplicate'))) {
+      const retry = await fetchSingleRow(
+        'multiplayer_player_access_links',
+        columns,
+        (query) => query.eq('grant_id', grantId).eq('status', 'active')
+      );
+
+      if (retry) {
+        return {
+          row: retry,
+          created: false,
+        };
+      }
+    }
+
+    throw error;
+  }
 }
 
 async function getOrCreateDevRound(seedInput) {
