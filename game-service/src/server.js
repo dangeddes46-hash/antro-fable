@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.97';
+const SERVICE_VERSION = 'v0.41.97a';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -525,7 +525,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.97 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.97a game-service skeleton.',
   });
 });
 
@@ -1799,7 +1799,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.97 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.97a invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -1879,7 +1879,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.97 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.97a dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1917,7 +1917,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.97 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.97a dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
