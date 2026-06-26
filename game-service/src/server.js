@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.96b';
+const SERVICE_VERSION = 'v0.41.97';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -277,6 +277,7 @@ app.get('/api/dev/round-summary', requireDevEndpoints, async (req, res) => {
       recentActions: summary.recentActions,
       recentTickLogs: summary.recentTickLogs,
       actionSummary: summary.actionSummary,
+      proofBoundary: summary.proofBoundary,
       roundSummary: summary.roundSummary,
       timestamp: nowIso(),
     });
@@ -524,7 +525,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.96 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.97 game-service skeleton.',
   });
 });
 
@@ -790,28 +791,44 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
+  const latestResetEvent = await fetchSingleRow(
+    'multiplayer_round_events',
+    'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
+    (query) => query.eq('round_id', round.id).eq('event_type', DEV_PROOF_RESET_EVENT_TYPE).order('created_at', { ascending: false })
+  );
+  const proofBoundaryAt = latestResetEvent?.created_at || null;
+  const isVisibleAfterBoundary = (createdAt) => {
+    if (!proofBoundaryAt) {
+      return true;
+    }
+
+    return compareIsoTimestamps(createdAt, proofBoundaryAt) >= 0;
+  };
   const actionRows = await fetchRows(
     'multiplayer_action_queue',
     'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
     (query) => query.eq('round_id', round.id).order('created_at', { ascending: false })
   );
-  const recentActions = actionRows.slice(0, 8);
-  const recentTickLogs = await fetchRows(
+  const visibleActionRows = actionRows.filter((row) => isVisibleAfterBoundary(row.created_at));
+  const recentActions = visibleActionRows.slice(0, 8);
+  const tickLogs = await fetchRows(
     'multiplayer_tick_log',
     'id, round_id, tick, status, started_at, completed_at, summary, error_message, created_at, updated_at',
-    (query) => query.eq('round_id', round.id).order('tick', { ascending: false }).limit(5)
+    (query) => query.eq('round_id', round.id).order('tick', { ascending: false })
   );
-  const recentEvents = await fetchRows(
+  const recentTickLogs = tickLogs.filter((row) => isVisibleAfterBoundary(row.created_at)).slice(0, 5);
+  const events = await fetchRows(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
-    (query) => query.eq('round_id', round.id).eq('visibility', 'public').order('created_at', { ascending: false }).limit(5)
+    (query) => query.eq('round_id', round.id).eq('visibility', 'public').order('created_at', { ascending: false })
   );
+  const recentEvents = events.filter((row) => isVisibleAfterBoundary(row.created_at)).slice(0, 5);
 
   const stateByPlayerId = new Map(states.map((state) => [state.player_id, state]));
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
-  const actionsByPlayerId = groupRowsByKey(actionRows, 'player_id');
-  const actionSummary = summarizeActionQueueRows(actionRows, round.current_tick);
+  const actionsByPlayerId = groupRowsByKey(visibleActionRows, 'player_id');
+  const actionSummary = summarizeActionQueueRows(visibleActionRows, round.current_tick);
   const formattedPlayers = players
     .map((player) => ({
       id: player.id,
@@ -859,6 +876,10 @@ async function readDevRoundSummary(roundKey) {
     recentPublicEvents: recentEvents.map(formatEvent),
     recentEvents: recentEvents.map(formatEvent),
     actionSummary,
+    proofBoundary: {
+      latestResetAt: proofBoundaryAt,
+      latestResetEvent: latestResetEvent ? formatEvent(latestResetEvent) : null,
+    },
     roundSummary: {
       roundKey: round.round_key,
       roundName: round.round_name,
@@ -868,6 +889,8 @@ async function readDevRoundSummary(roundKey) {
       factoryCount: totalFactoryCount,
       queuedCount: actionSummary.queued,
       processedCount: actionSummary.processed,
+      latestResetAt: proofBoundaryAt,
+      latestResetEventId: latestResetEvent?.id || null,
       recentEventTitles: recentPublicEventTitles,
     },
   };
@@ -897,6 +920,29 @@ function summarizeActionQueueRows(rows = [], currentTick = 0) {
     unknown: counts.unknown,
     dueNow: rows.filter((row) => row.status === 'queued' && Number(row.execute_after_tick ?? 0) <= Number(currentTick ?? 0)).length,
   };
+}
+
+function compareIsoTimestamps(left, right) {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+
+  if (!Number.isFinite(leftTime) && !Number.isFinite(rightTime)) {
+    return 0;
+  }
+
+  if (!Number.isFinite(leftTime)) {
+    return -1;
+  }
+
+  if (!Number.isFinite(rightTime)) {
+    return 1;
+  }
+
+  if (leftTime === rightTime) {
+    return 0;
+  }
+
+  return leftTime > rightTime ? 1 : -1;
 }
 
 async function buildDevFactoryAction(actionInput) {
@@ -1753,7 +1799,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.96b invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.97 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -1833,7 +1879,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.96 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.97 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1871,7 +1917,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.96 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.97 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
