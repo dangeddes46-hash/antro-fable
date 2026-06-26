@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.98";
+const PROTOTYPE_VERSION = "v0.41.99";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1324,7 +1324,7 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
 function multiplayerIdentityFailureMessage(status, errorCode) {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.98 this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99 this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
@@ -1338,7 +1338,7 @@ function multiplayerIdentityFailureMessage(status, errorCode) {
 function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.98 this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99 this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
@@ -1678,6 +1678,7 @@ export default function App() {
   const [multiplayerPreviewState, setMultiplayerPreviewState] = useState({ loading: false, error: "", fetchedAt: null, summary: null });
   const [multiplayerIdentityState, setMultiplayerIdentityState] = useState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+  const [hostedRoundState, setHostedRoundState] = useState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2349,6 +2350,7 @@ export default function App() {
     setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
     setMultiplayerIdentityState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
     setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+    setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   }
   function multiplayerIdentityFallbackSummary() {
     const accessGrant = testerAccessRecord?.accessGrant || null;
@@ -2377,6 +2379,14 @@ export default function App() {
       grantId: resolved?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || null,
       testerLabel,
       displayName,
+    };
+  }
+  function hostedRoundRequestBody() {
+    const accessGrant = testerAccessRecord?.accessGrant || null;
+    const grantId = cleanSingleLineText(String(hostedRoundState.summary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || ""), 128).trim() || "";
+    return {
+      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+      grantId,
     };
   }
   async function refreshMultiplayerHealth() {
@@ -2490,6 +2500,104 @@ export default function App() {
       }
     } catch (error) {
       setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
+    }
+  }
+  function hostedRoundFailureMessage(status, errorCode) {
+    if (errorCode === "dev_endpoints_disabled") return "Hosted DEV round entry is currently disabled.";
+    if (errorCode === "identity_not_provided") return "Redeem a real invite token before entering a hosted round.";
+    if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
+    if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
+    if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
+    if (errorCode === "player_not_found") return "The hosted player linked to that grant was not found.";
+    if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
+      return hostedGameServiceFailureMessage();
+    }
+    return "Hosted DEV round state could not be loaded.";
+  }
+  async function refreshHostedDevRound({ forceEnter = false } = {}) {
+    if (hostedRoundState.loading) return;
+    if (!testerAccessRecord?.accepted) {
+      setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
+      return;
+    }
+
+    const accessGrant = testerAccessRecord?.accessGrant || null;
+    const grantId = cleanSingleLineText(String(accessGrant?.grantId || accessGrant?.currentGrantId || ""), 128).trim() || "";
+    if (testerAccessRecord?.accessMode !== "invite-token" || !grantId) {
+      const message = "Redeem a real invite token before entering a hosted round.";
+      setHostedRoundState({
+        loading: false,
+        error: forceEnter ? message : "",
+        message: "",
+        fetchedAt: Date.now(),
+        summary: null,
+      });
+      return;
+    }
+
+    if (!GAME_SERVICE_URL) {
+      setHostedRoundState({ loading: false, error: hostedGameServiceFailureMessage(), message: "", fetchedAt: Date.now(), summary: null });
+      return;
+    }
+
+    setHostedRoundState((prev) => ({ ...prev, loading: true, error: "", message: "" }));
+    const fetchedAt = Date.now();
+    try {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
+      try {
+        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/hosted-round/enter`, {
+          method: "POST",
+          headers: { "Accept": "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify(hostedRoundRequestBody()),
+          signal: controller?.signal,
+        });
+        const text = await response.text();
+        let result = {};
+        if (text) {
+          try {
+            result = JSON.parse(text);
+          } catch {
+            result = { raw: text };
+          }
+        }
+
+        if (!response.ok || result?.ok === false) {
+          const errorCode = result?.error || null;
+          const errorMessage = hostedRoundFailureMessage(response.status, errorCode);
+          setHostedRoundState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
+          return;
+        }
+
+        const summary = {
+          round: result?.round || null,
+          player: result?.player || null,
+          playerState: result?.playerState || null,
+          buildings: result?.buildings || null,
+          armies: result?.armies || null,
+          actionSummary: result?.actionSummary || null,
+          recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
+          otherPlayers: Array.isArray(result?.otherPlayers) ? result.otherPlayers : [],
+          roundSummary: result?.roundSummary || null,
+          proofBoundary: result?.proofBoundary || null,
+          canonicalState: result?.canonicalState || null,
+          accessLinkCreated: Boolean(result?.accessLinkCreated),
+          resolvedFrom: result?.resolvedFrom || null,
+          grantId: result?.grantId || grantId,
+          currentPlayerSummary: result?.currentPlayerSummary || null,
+        };
+        setHostedRoundState({
+          loading: false,
+          error: "",
+          message: result?.message || `Hosted DEV round ready for ${summary.player?.displayName || "the selected player"}.`,
+          fetchedAt,
+          summary,
+        });
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      setHostedRoundState({ loading: false, error: hostedRoundFailureMessage(503, "service_unavailable"), message: "", fetchedAt, summary: null });
     }
   }
   async function refreshMultiplayerIdentity({ forceResolve = false } = {}) {
@@ -2620,7 +2728,7 @@ export default function App() {
 
     return refreshMultiplayerIdentity({ forceResolve: true });
   }
-  async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage }) {
+  async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage, onSuccessRefresh = refreshMultiplayerPreview }) {
     if (multiplayerDevActionState.loading) return;
     if (!testerAccessRecord?.accepted) return;
     if (!GAME_SERVICE_URL) {
@@ -2680,7 +2788,9 @@ export default function App() {
           lastActionResult: result,
           lastActionMessage: result?.message || successMessage,
         });
-        refreshMultiplayerPreview();
+        if (typeof onSuccessRefresh === "function") {
+          onSuccessRefresh();
+        }
       } finally {
         if (timeoutId) window.clearTimeout(timeoutId);
       }
@@ -2729,6 +2839,7 @@ export default function App() {
       actionType: "dev_queue_build_factory",
       requestBody: { ...multiplayerIdentityRequestBody(), amount: 1 },
       successMessage: "Factory build order queued for next tick.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
   async function submitMultiplayerDevManualTick() {
@@ -2739,6 +2850,7 @@ export default function App() {
         roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
       },
       successMessage: "Manual tick processed.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
   async function submitMultiplayerDevResetProofRound() {
@@ -2748,6 +2860,7 @@ export default function App() {
       actionType: "dev_reset_proof_round",
       requestBody: multiplayerIdentityRequestBody(),
       successMessage: "Shared DEV proof state reset.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
   async function submitMultiplayerDevBuildFactory() {
@@ -2756,6 +2869,32 @@ export default function App() {
       actionType: "dev_build_factory",
       requestBody: { ...multiplayerIdentityRequestBody(), amount: 1 },
       successMessage: "Legacy immediate proof applied.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  function hostedRoundRefreshAfterAction() {
+    refreshHostedDevRound();
+    refreshMultiplayerPreview();
+  }
+  async function enterHostedDevRound() {
+    return refreshHostedDevRound({ forceEnter: true });
+  }
+  async function submitHostedDevQueueBuildFactory() {
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/actions/queue-build-factory",
+      actionType: "hosted_queue_build_factory",
+      requestBody: { ...hostedRoundRequestBody(), amount: 1 },
+      successMessage: "Factory build order queued for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevManualTick() {
+    return submitMultiplayerDevAction({
+      endpointPath: "/api/dev/tick/manual-run",
+      actionType: "hosted_manual_tick",
+      requestBody: hostedRoundRequestBody(),
+      successMessage: "Hosted round manual tick processed.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
   async function submitTesterAccess() {
@@ -2774,7 +2913,11 @@ export default function App() {
       setTesterAccessCommentDraft("");
       setTesterAccessError("");
       setTesterAccessSubmitting(false);
+      setMultiplayerHealthState({ loading: false, error: "", fetchedAt: null, summary: null });
+      setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
       setMultiplayerIdentityState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
+      setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+      setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
       return;
     }
 
@@ -2837,7 +2980,11 @@ export default function App() {
         setTesterAccessDraft("");
         setTesterAccessCommentDraft("");
         setTesterAccessError("");
+        setMultiplayerHealthState({ loading: false, error: "", fetchedAt: null, summary: null });
+        setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
         setMultiplayerIdentityState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
+        setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+        setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
       } finally {
         if (timeoutId) window.clearTimeout(timeoutId);
       }
@@ -6630,6 +6777,15 @@ export default function App() {
       const actionSummary = summary?.actionSummary || null;
       const roundSummary = summary?.roundSummary || null;
       const proofBoundary = summary?.proofBoundary || null;
+      const hostedSummary = hostedRoundState.summary || null;
+      const hostedRound = hostedSummary?.round || null;
+      const hostedPlayer = hostedSummary?.player || null;
+      const hostedPlayerState = hostedSummary?.playerState || null;
+      const hostedBuildings = hostedSummary?.buildings || null;
+      const hostedArmies = hostedSummary?.armies || null;
+      const hostedActionSummary = hostedSummary?.actionSummary || null;
+      const hostedOtherPlayers = Array.isArray(hostedSummary?.otherPlayers) ? hostedSummary.otherPlayers : [];
+      const hostedRoundSummary = hostedSummary?.roundSummary || null;
       const previewBusy = multiplayerPreviewState.loading;
       const roundKey = roundSummary?.roundKey || round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
       const roundName = roundSummary?.roundName || round?.roundName || "Shared Multiplayer DEV";
@@ -6639,6 +6795,17 @@ export default function App() {
       const lastHealthFetchLabel = multiplayerHealthState.fetchedAt ? new Date(multiplayerHealthState.fetchedAt).toLocaleString() : "Not refreshed yet";
       const identitySummary = multiplayerIdentityState.summary || (testerAccessRecord?.accepted && testerAccessRecord?.accessMode !== "invite-token" ? multiplayerIdentityFallbackSummary() : null);
       const accessGrant = testerAccessRecord?.accessGrant || null;
+      const canEnterHostedDevRound = Boolean(testerAccessRecord?.accepted && testerAccessRecord?.accessMode === "invite-token" && (accessGrant?.grantId || accessGrant?.currentGrantId));
+      const hostedGrantId = hostedSummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
+      const hostedPlayerLabel = hostedPlayer ? `${hostedPlayer.displayName}${hostedPlayer.testerLabel ? ` / ${hostedPlayer.testerLabel}` : ""}` : (canEnterHostedDevRound ? "Hosted round not entered yet" : "Redeem a real invite token");
+      const hostedRoundKey = hostedRound?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+      const hostedRoundName = hostedRound?.roundName || "Shared Multiplayer DEV";
+      const hostedCurrentTick = hostedRound?.currentTick ?? hostedRoundSummary?.currentTick ?? "-";
+      const hostedLastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
+      const hostedFactoryCount = Number(hostedBuildings?.counts?.factory ?? hostedSummary?.currentPlayerSummary?.factoryCount ?? 0);
+      const hostedQueuedCount = Number(hostedActionSummary?.queued ?? hostedSummary?.currentPlayerSummary?.queuedCount ?? 0);
+      const hostedProcessedCount = Number(hostedActionSummary?.processed ?? hostedSummary?.currentPlayerSummary?.processedCount ?? 0);
+      const hostedDueNowCount = Number(hostedActionSummary?.dueNow ?? 0);
       const grantId = identitySummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
       const testerLabel = identitySummary?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "";
       const displayName = identitySummary?.displayName || (multiplayerIdentityState.loading ? "Resolving multiplayer identity..." : testerAccessRecord?.accessMode === "invite-token" ? "Invite grant pending resolution" : "DEV Invite Tester");
@@ -6682,9 +6849,11 @@ export default function App() {
         <OldTable rows={rows} />
         {note ? <div className="text-xs text-orange-600 mt-2">{note}</div> : null}
       </div>;
-      return <Panel title="Browser-Driven Multiplayer Proof">
-        <p className="text-orange-200 mb-3">This proof stays browser-driven and local to your tester access. Resolve the invite grant, queue +1 factory, run a manual DEV tick, and confirm the updated factory count. The status below trims to the latest reset boundary so older proof attempts do not clutter the current run.</p>
+      return <>
+        <Panel title="Browser-Driven Multiplayer Proof">
+        <p className="text-orange-200 mb-3">This diagnostic proof stays browser-driven and local to your tester access. Resolve the invite grant, queue +1 factory, run a manual DEV tick, and confirm the updated factory count. The hosted round view below is the player-facing entry path; this panel remains for testing and troubleshooting.</p>
         <div className="flex flex-wrap items-center gap-2 mb-3">
+          {canEnterHostedDevRound ? <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Entering Hosted DEV Round..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button> : <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Redeem a real invite token before entering a hosted round.</span>}
           <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerHealth} disabled={multiplayerHealthState.loading || multiplayerPreviewState.loading}>{multiplayerHealthState.loading ? "Refreshing service health..." : "Refresh service health"}</button>
           <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading || multiplayerDevActionState.loading}>{multiplayerPreviewState.loading ? "Refreshing round summary..." : "Refresh round summary"}</button>
           <button className="classic-btn antro-action-btn" onClick={resolveMyMultiplayerIdentity} disabled={multiplayerIdentityState.loading || multiplayerDevActionState.loading}>{multiplayerIdentityState.loading ? "Resolving identity..." : identityResolved ? "Re-resolve identity" : "Resolve my multiplayer identity"}</button>
@@ -6804,7 +6973,63 @@ export default function App() {
           </div>)}
         </div> : null}
         <p className="text-xs text-orange-600 mt-3">This proof is read-only until you click a DEV action button. It does not write to localStorage or Supabase, and it does not change the browser-local GLW or IG saves.</p>
-      </Panel>;
+      </Panel>
+      <Panel title="Hosted DEV Round">
+        <p className="text-orange-200 mb-3">This is the player-facing hosted round entry view. It loads canonical server state from your invite-token grant instead of guessing from browser-local saves.</p>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={!canEnterHostedDevRound || hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Loading hosted state..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>Return to launcher</button>
+          <span className="text-[10px] uppercase tracking-wide border border-cyan-700 bg-[#0b1d24] text-cyan-200 px-2 py-0.5">Invite-token hosted entry</span>
+        </div>
+        {hostedRoundState.error ? <div className="mb-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mb-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        {!hostedSummary ? <div className="text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Redeem a real invite token and click Enter Hosted DEV Round to load your canonical hosted state.</div> : <div className="grid lg:grid-cols-2 gap-3">
+          {renderStatusCard("Hosted Access", [
+            ["Access mode", testerAccessModeLabel(testerAccessRecord)],
+            ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
+            ["Tester label", hostedPlayer?.testerLabel || testerLabel || "—"],
+            ["Current browser identity", hostedPlayerLabel],
+            ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
+            ["Grant id", hostedGrantId ? maskStableIdentifier(hostedGrantId) : "—"],
+            ["Round status", hostedRoundSummary?.roundStatus || hostedRound?.status || "Unknown"],
+            ["Last refreshed", hostedLastFetchLabel],
+          ], "This hosted view is canonical server state and remains separate from the local launcher save data.")}
+          {renderStatusCard("Service Health", [
+            ["Reachable", health ? (health.reachable ? "Yes" : "No") : "Unknown"],
+            ["Service", health?.service || "Not loaded"],
+            ["Version", health?.version || "—"],
+            ["Environment", health?.environment || "—"],
+            ["Supabase configured", health?.supabaseConfigured === true ? "Yes" : health?.supabaseConfigured === false ? "No" : "Unknown"],
+            ["DB reachable", health?.dbReachable === true ? "Yes" : health?.dbReachable === false ? "No" : "Unknown"],
+            ["Invite ledger", health?.inviteLedgerReachable === true ? "Yes" : health?.inviteLedgerReachable === false ? "No" : "Unknown"],
+            ["DEV endpoints", health?.devEndpointsEnabled === true ? "Enabled" : health?.devEndpointsEnabled === false ? "Disabled" : "Unknown"],
+            ["Allowed origins", Number.isFinite(Number(health?.allowedOriginsCount)) ? fmt(Number(health.allowedOriginsCount)) : "—"],
+            ["Last refreshed", lastHealthFetchLabel],
+          ], "This health check only reports service readiness and never exposes secrets.")}
+          {renderStatusCard("Canonical Player State", [
+            ["Round name", hostedRoundName],
+            ["Round key", hostedRoundKey],
+            ["Current tick", hostedCurrentTick],
+            ["Player", hostedPlayerLabel],
+            ["Factory count", fmt(Math.max(0, Math.floor(hostedFactoryCount)))],
+            ["Queued actions", fmt(hostedQueuedCount)],
+            ["Processed actions", fmt(hostedProcessedCount)],
+            ["Due now", fmt(hostedDueNowCount)],
+            ["Race", raceNameFromKey(hostedPlayerState?.raceKey || "")],
+            ["State version", hostedPlayerState?.stateVersion ?? "—"],
+            ["Land", hostedPlayerState ? fmt(Number(hostedPlayerState.land || 0)) : "—"],
+            ["Power", hostedPlayerState ? compactFmt(Number(hostedPlayerState.power || 0)) : "—"],
+            ["Money", hostedPlayerState ? compactFmt(Number(hostedPlayerState.money || 0)) : "—"],
+            ["Buildings", `Factories ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.factory ?? 0))))} · Barracks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.barracks ?? 0))))} · Banks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.bank ?? 0))))} · Science labs ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.scienceLabs ?? 0))))}`],
+            ["Armies", `Infantry ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.infantry ?? 0))))} · Defense ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.defense ?? 0))))} · Training ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.training ?? 0))))} · Returning ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.returning ?? 0))))}`],
+          ], "Loaded directly from the hosted game-service so the player view stays canonical.")}
+          {renderStatusCard("Other Players", hostedOtherPlayers.length ? hostedOtherPlayers.map((player, index) => [`Player ${index + 1}`, `${player.displayName || "Unknown player"}${player.testerLabel ? ` / ${player.testerLabel}` : ""} · Factories ${fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0))))} · Queued ${fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0))))} · Processed ${fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0))))} · Tick ${player.currentTick ?? "—"}`]) : [["Other players", "No other hosted players are visible yet."]], "Compact public summaries only.")}
+        </div>}
+        <p className="text-xs text-orange-600 mt-3">Hosted actions still call the existing DEV endpoints for now, but the round view itself is sourced from the server so the player state is canonical.</p>
+      </Panel>
+    </>;
     };
 
     return shell(<>

@@ -1,4 +1,4 @@
-# Known limitations - current v0.41.96 handoff
+# Known limitations - current v0.41.99 handoff
 
 ## Hosted multiplayer not implemented
 
@@ -29,6 +29,8 @@ v0.41.92 adds a read-only Shared Multiplayer DEV preview in the launcher. It onl
 v0.41.94 adds a dev-only queued action and manual tick proof in the Shared Multiplayer DEV panel. It proves the browser can queue a canonical server order and the server can apply it on a manual tick, but it is not final building gameplay and must be disabled or removed before public multiplayer testing.
 
 v0.41.96 adds a dev-only token-to-player identity proof in the Shared Multiplayer DEV panel. It resolves an already-redeemed invite grant to a multiplayer player in the hosted game service, and the proof reset control clears the shared DEV proof round for all active players so the proof can be replayed safely, but it is still not final multiplayer gameplay and must remain disabled or removed before public multiplayer testing.
+
+v0.41.99 adds the first hosted DEV round entry view. It loads canonical player state from the hosted game service for an invite-token grant, but it is still a DEV-only scaffold and must remain disabled or removed before public multiplayer testing.
 
 ## Multiplayer planning only
 

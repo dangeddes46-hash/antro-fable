@@ -6,7 +6,7 @@ Deploy this folder as a separate Render Web Service.
 
 - Service type: `Web Service`
 - Repository: `dangeddes46-hash/antrophai_GLWTest`
-- Branch: `dev-multiplayer-token-player-identity-v04196`
+- Branch: `dev-hosted-round-entry-canonical-state-v04199`
 - Root Directory: `game-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -40,6 +40,10 @@ Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/health
 Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/version
 Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/schema-status
 Invoke-RestMethod "https://antrophai-game-service-dev.onrender.com/api/dev/round-summary?roundKey=shared-dev-001"
+Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/hosted-round/enter" -ContentType "application/json" -Body (@{
+  roundKey = "shared-dev-001"
+  grantId = "grant_xxx"
+} | ConvertTo-Json)
 Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/identity/resolve-player" -ContentType "application/json" -Body (@{
   roundKey = "shared-dev-001"
   grantId = "grant_xxx"

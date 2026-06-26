@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.98';
+const SERVICE_VERSION = 'v0.41.99';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -144,7 +144,7 @@ app.get('/api/version', (req, res) => {
     localEnvLoaded: LOCAL_ENV_LOADED,
     supabaseConfigured: SUPABASE_CONFIGURED,
     devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
-    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints, the queued-action/manual-tick proof, the proof-reset endpoint, and the invite-grant identity resolver are temporary scaffolding.',
+    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints, the queued-action/manual-tick proof, the proof-reset endpoint, the invite-grant identity resolver, and the hosted-round entry endpoint are temporary scaffolding.',
     timestamp: nowIso(),
   });
 });
@@ -242,6 +242,65 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
     });
   } catch (error) {
     sendErrorResponse(res, error, 'resolve_identity_failed');
+  }
+});
+
+app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the hosted round entry endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const hostedInput = normalizeHostedRoundEntryInput(req.body || {});
+    if (!hostedInput.grantId) {
+      res.status(400).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'identity_not_provided',
+        message: 'Provide an active grantId to enter the hosted DEV round.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const result = await readHostedRoundEntryState(hostedInput);
+
+    res.status(200).json({
+      ok: true,
+      service: SERVICE_NAME,
+      version: SERVICE_VERSION,
+      environment: GAME_SERVICE_ENV,
+      accessLinkCreated: Boolean(result.accessLinkCreated),
+      resolvedFrom: result.resolvedFrom,
+      grantId: result.grantId,
+      round: result.round,
+      player: result.player,
+      playerState: result.playerState,
+      buildings: result.buildings,
+      armies: result.armies,
+      actionSummary: result.actionSummary,
+      recentEvents: result.recentEvents,
+      otherPlayers: result.otherPlayers,
+      roundSummary: result.roundSummary,
+      proofBoundary: result.proofBoundary,
+      canonicalState: result.canonicalState,
+      currentPlayerSummary: result.currentPlayerSummary,
+      message: `Hosted DEV round ready for ${result.player?.displayName || 'the selected player'}.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'hosted_round_enter_failed');
   }
 });
 
@@ -531,7 +590,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.98 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.99 game-service skeleton.',
   });
 });
 
@@ -694,6 +753,16 @@ function normalizeDevProofResetInput(body) {
   return normalizeDevIdentityInput(body);
 }
 
+function normalizeHostedRoundEntryInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  return {
+    roundKey: normalizeText(body.roundKey || identity.roundKey || DEV_ROUND_DEFAULTS.roundKey),
+    grantId: identity.grantId,
+    testerLabel: identity.testerLabel,
+    displayName: identity.displayName,
+  };
+}
+
 function normalizeDevIdentityInput(body) {
   const requestedTesterLabel = normalizeDevTesterLabel(body.testerLabel || body.playerDisplayName || body.displayName || null);
   const requestedDisplayName = normalizeDevDisplayName(body.displayName || body.playerDisplayName || body.testerLabel || '', '');
@@ -809,13 +878,7 @@ async function readDevRoundSummary(roundKey) {
     (query) => query.eq('round_id', round.id).eq('event_type', DEV_PROOF_RESET_EVENT_TYPE).order('created_at', { ascending: false })
   );
   const proofBoundaryAt = latestResetEvent?.created_at || null;
-  const isVisibleAfterBoundary = (createdAt) => {
-    if (!proofBoundaryAt) {
-      return true;
-    }
-
-    return compareIsoTimestamps(createdAt, proofBoundaryAt) >= 0;
-  };
+  const isVisibleAfterBoundary = (createdAt) => isAfterProofBoundary(createdAt, proofBoundaryAt);
   const actionRows = await fetchRows(
     'multiplayer_action_queue',
     'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
@@ -906,6 +969,101 @@ async function readDevRoundSummary(roundKey) {
       recentEventTitles: recentPublicEventTitles,
     },
   };
+}
+
+async function readHostedRoundEntryState(hostedInput) {
+  const identity = await resolveDevPlayerIdentity(hostedInput, { requireGrant: true });
+  const summary = await readDevRoundSummary(identity.round.round_key);
+
+  if (!summary) {
+    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
+  }
+
+  const currentPlayer = summary.players.find((player) => player.id === identity.player.id) || null;
+  const boundaryAt = summary.proofBoundary?.latestResetAt || null;
+  const actionRows = await fetchRows(
+    'multiplayer_action_queue',
+    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+    (query) => query.eq('round_id', identity.round.id).eq('player_id', identity.player.id).order('created_at', { ascending: false })
+  );
+  const visibleActionRows = actionRows.filter((row) => isAfterProofBoundary(row.created_at, boundaryAt));
+  const actionSummary = summarizeActionQueueRows(visibleActionRows, Number(identity.round.current_tick || 0));
+  const currentPlayerState = normalizeHostedPlayerState(currentPlayer?.state);
+  const currentPlayerBuildings = normalizeHostedBuildingSummary(currentPlayer?.buildings || []);
+  const currentPlayerArmies = normalizeHostedArmySummary(currentPlayer?.armies || []);
+  const currentPlayerSummary = currentPlayer ? compactHostedPlayerSummary(currentPlayer) : {
+    id: identity.player.id,
+    displayName: identity.player.display_name,
+    testerLabel: identity.player.tester_label,
+    playerRoundId: identity.playerRound?.id || null,
+    currentTick: Number(identity.round.current_tick || 0),
+    raceKey: currentPlayerState.raceKey,
+    land: currentPlayerState.land,
+    power: currentPlayerState.power,
+    factoryCount: currentPlayerBuildings.counts.factory,
+    queuedCount: actionSummary.queued,
+    processedCount: actionSummary.processed,
+  };
+  if (currentPlayerSummary && !currentPlayerSummary.playerRoundId) {
+    currentPlayerSummary.playerRoundId = identity.playerRound?.id || currentPlayer.playerRoundId || currentPlayer.player_round_id || null;
+  }
+
+  return {
+    grantId: identity.grantId || hostedInput.grantId,
+    resolvedFrom: identity.resolvedFrom,
+    accessLinkCreated: Boolean(identity.accessLinkCreated),
+    round: formatRound(identity.round),
+    player: formatPlayer(identity.player),
+    playerState: currentPlayerState,
+    buildings: currentPlayerBuildings,
+    armies: currentPlayerArmies,
+    actionSummary: {
+      total: actionSummary.total,
+      queued: actionSummary.queued + actionSummary.processing,
+      queuedRows: actionSummary.queued,
+      processing: actionSummary.processing,
+      processed: actionSummary.processed,
+      dueNow: actionSummary.dueNow,
+      failed: actionSummary.failed,
+      cancelled: actionSummary.cancelled,
+      unknown: actionSummary.unknown,
+    },
+    recentEvents: summary.recentEvents,
+    otherPlayers: summary.players
+      .filter((player) => player.id !== identity.player.id)
+      .map(compactHostedPlayerSummary),
+    roundSummary: summary.roundSummary,
+    proofBoundary: summary.proofBoundary,
+    canonicalState: {
+      round: formatRound(identity.round),
+      player: formatPlayer(identity.player),
+      playerState: currentPlayerState,
+      buildings: currentPlayerBuildings,
+      armies: currentPlayerArmies,
+      actionSummary: {
+        total: actionSummary.total,
+        queued: actionSummary.queued + actionSummary.processing,
+        queuedRows: actionSummary.queued,
+        processing: actionSummary.processing,
+        processed: actionSummary.processed,
+        dueNow: actionSummary.dueNow,
+      },
+      otherPlayers: summary.players
+        .filter((player) => player.id !== identity.player.id)
+        .map(compactHostedPlayerSummary),
+      currentTick: Number(identity.round.current_tick || 0),
+      roundSummary: summary.roundSummary,
+    },
+    currentPlayerSummary,
+  };
+}
+
+function isAfterProofBoundary(createdAt, boundaryAt) {
+  if (!boundaryAt) {
+    return true;
+  }
+
+  return compareIsoTimestamps(createdAt, boundaryAt) >= 0;
 }
 
 function summarizeActionQueueRows(rows = [], currentTick = 0) {
@@ -1805,7 +1963,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.98 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.99 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -1885,7 +2043,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.98 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.99 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1923,7 +2081,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.98 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.99 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2236,6 +2394,98 @@ function formatArmyRows(rows) {
     trainingCount: row.training_count,
     returningCount: row.returning_count,
   }));
+}
+
+function normalizeHostedPlayerState(state) {
+  return {
+    id: state?.id || null,
+    tick: Number(state?.tick ?? state?.stateTick ?? state?.currentTick ?? 0),
+    stateVersion: Number(state?.stateVersion ?? state?.state_version ?? 0),
+    raceKey: state?.raceKey || state?.race_key || 'unknown',
+    land: Number(state?.land ?? 0),
+    power: Number(state?.power ?? 0),
+    money: Number(state?.money ?? 0),
+    energy: Number(state?.energy ?? 0),
+    food: Number(state?.food ?? 0),
+    water: Number(state?.water ?? 0),
+    population: Number(state?.population ?? 0),
+  };
+}
+
+function normalizeHostedBuildingSummary(rows = []) {
+  const grouped = groupRowsByKey(rows, 'building_key');
+  const summaryForKey = (key) => {
+    const row = (grouped.get(key) || [null])[0];
+    const count = Math.max(0, Math.floor(Number(row?.count ?? 0)));
+    const effectiveCount = Math.max(0, Math.floor(Number(row?.effective_count ?? row?.count ?? 0)));
+    return {
+      count,
+      effectiveCount,
+    };
+  };
+
+  return {
+    rows: formatBuildingRows(rows),
+    byKey: {
+      living_area: summaryForKey('living_area'),
+      factory: summaryForKey('factory'),
+      barracks: summaryForKey('barracks'),
+      bank: summaryForKey('bank'),
+      science_labs: summaryForKey('science_labs'),
+    },
+    counts: {
+      livingArea: summaryForKey('living_area').count,
+      factory: summaryForKey('factory').count,
+      barracks: summaryForKey('barracks').count,
+      bank: summaryForKey('bank').count,
+      scienceLabs: summaryForKey('science_labs').count,
+    },
+  };
+}
+
+function normalizeHostedArmySummary(rows = []) {
+  const grouped = groupRowsByKey(rows, 'unit_key');
+  const summaryForKey = (key) => {
+    const row = (grouped.get(key) || [null])[0];
+    const count = Math.max(0, Math.floor(Number(row?.count ?? 0)));
+    const trainingCount = Math.max(0, Math.floor(Number(row?.training_count ?? 0)));
+    const returningCount = Math.max(0, Math.floor(Number(row?.returning_count ?? 0)));
+    return {
+      count,
+      trainingCount,
+      returningCount,
+    };
+  };
+
+  return {
+    rows: formatArmyRows(rows),
+    byKey: {
+      infantry: summaryForKey('infantry'),
+      defense: summaryForKey('defense'),
+    },
+    counts: {
+      infantry: summaryForKey('infantry').count,
+      defense: summaryForKey('defense').count,
+      training: summaryForKey('infantry').trainingCount + summaryForKey('defense').trainingCount,
+      returning: summaryForKey('infantry').returningCount + summaryForKey('defense').returningCount,
+    },
+  };
+}
+
+function compactHostedPlayerSummary(player = {}) {
+  return {
+    id: player.id,
+    displayName: player.displayName || player.display_name || 'Unknown player',
+    testerLabel: player.testerLabel || player.tester_label || null,
+    playerRoundId: player.playerRoundId || player.player_round_id || null,
+    currentTick: Number(player.state?.tick ?? player.currentTick ?? 0),
+    raceKey: player.state?.raceKey || player.state?.race_key || 'unknown',
+    land: Number(player.state?.land ?? 0),
+    power: Number(player.state?.power ?? 0),
+    factoryCount: Math.max(0, Math.floor(Number(player.factoryCount ?? 0))),
+    queuedCount: Math.max(0, Math.floor(Number(player.queuedCount ?? 0))),
+    processedCount: Math.max(0, Math.floor(Number(player.processedCount ?? 0))),
+  };
 }
 
 function formatEvent(event) {

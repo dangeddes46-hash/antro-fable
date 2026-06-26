@@ -1,4 +1,4 @@
-# AntrophAI v0.41.96 game-service dev seed/read/queued-action/manual-tick/reset/identity proof
+# AntrophAI v0.41.99 game-service dev seed/read/queued-action/manual-tick/reset/identity/hosted-round proof
 
 This folder contains the first standalone multiplayer game-service proof for AntrophAI.
 
@@ -26,6 +26,7 @@ Important:
 - `POST /api/dev/tick/manual-run` when dev endpoints are enabled
 - `POST /api/dev/reset-proof-round` when dev endpoints are enabled
 - `POST /api/dev/identity/resolve-player` when dev endpoints are enabled
+- `POST /api/dev/hosted-round/enter` when dev endpoints are enabled
 
 ## Local setup
 
@@ -67,7 +68,7 @@ Important:
 
 If Supabase is not configured locally, `/health` still starts cleanly and `/api/schema-status` returns a useful configuration error. The proof action endpoint fails cleanly with a dev-endpoints-disabled or Supabase-configured error instead of writing directly from the browser.
 
-The dev seed/read endpoints and the queue/manual-tick/reset proof endpoints are temporary scaffolding. Keep them disabled for any public multiplayer test unless a specific DEV proof run requires them.
+The dev seed/read endpoints, the queued-action/manual-tick/reset proof endpoints, and the hosted-round entry endpoint are temporary scaffolding. Keep them disabled for any public multiplayer test unless a specific DEV proof run requires them.
 
 ## Render deployment
 

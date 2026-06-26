@@ -1,4 +1,4 @@
-# Hosted handoff notes - AntrophAI v0.41.96
+# Hosted handoff notes - AntrophAI v0.41.99
 
 ## Read this first
 
@@ -11,6 +11,8 @@ v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview. It reads host
 v0.41.94 adds the first dev-only queued action and manual tick proof. The browser can queue +1 factory for DEV Player One, and the hosted game service mutates the canonical multiplayer tables only when a manual DEV tick runs.
 
 v0.41.96 adds a dev-only token-to-player identity proof. It resolves an already-redeemed invite grant to a multiplayer player in the hosted game service, and the proof reset control now clears the shared DEV proof round for all active players without touching browser-local saves.
+
+v0.41.99 adds the first hosted DEV round entry view. It loads canonical player state from the hosted game service using the invite-token grant while keeping the diagnostic proof panel available.
 
 v0.41.87 is the next planning/docs-only pass for the future multiplayer architecture. It does not add multiplayer code yet and it does not change gameplay or the current token-service runtime.
 
@@ -36,6 +38,7 @@ The Phase 2 endpoint contract lives in `INVITE_TOKEN_ENDPOINT_CONTRACT.md`.
 The Supabase service skeleton for that phase now lives in `INVITE_TOKEN_SUPABASE_IMPLEMENTATION.md` and `token-service/`. The DEV client now redeems invite tokens against that hosted service.
 
 v0.41.86 is the invite-token hardening pass for the DEV client. The current runtime game remains the same local prototype behaviour.
+v0.41.99 is the hosted round entry and canonical state milestone for the DEV multiplayer scaffold.
 v0.41.87 will be a planning-only multiplayer architecture pass.
 
 For hosted play, the server must become authoritative for:

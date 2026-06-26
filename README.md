@@ -1,4 +1,4 @@
-# AntrophAI v0.41.96 GLW handoff build
+# AntrophAI v0.41.99 GLW handoff build
 
 This package is a clean local prototype handoff for the single-player Godlike Warfare (GLW) test build of AntrophAI.
 
@@ -17,6 +17,8 @@ v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview that reads the
 v0.41.94 adds the first dev-only queued action and manual tick proof. The Shared Multiplayer DEV panel can ask the hosted game service to queue +1 factory for DEV Player One and then run a manual DEV tick to apply it. The older immediate build proof remains as temporary legacy scaffolding for comparison.
 
 v0.41.96 adds a dev-only token-to-player identity proof for the Shared Multiplayer DEV panel. It resolves an already-redeemed invite grant to a multiplayer player in the hosted game service and keeps the proof/reset actions scoped to the shared DEV round without touching browser-local GLW or Intro Game saves.
+
+v0.41.99 adds the first hosted DEV round entry pass. The client can now load canonical server state for an invite-token grant through the hosted game-service while keeping the v0.41.98 proof tooling available for diagnostics.
 
 Planning note: `INVITE_TOKEN_ACCESS_PLAN.md` documents the invite-token access rollout, including the hosted DEV path and the remaining static fallback codes.
 
@@ -43,6 +45,7 @@ Current focus:
 - local save/load through browser localStorage
 - build, train, attack, missile, LRC, scanner, ranking and report behaviour
 - admin/debug tools for tester validation
+- hosted DEV round entry using canonical server state from the game-service
 
 Deferred:
 
