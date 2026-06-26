@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.97a';
+const SERVICE_VERSION = 'v0.41.98';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -215,6 +215,8 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
       roundKey: result.round.round_key,
       grantId: result.grantId || identityInput.grantId,
       accessLinkCreated: Boolean(result.accessLinkCreated),
+      requestedDisplayNameIgnored: Boolean(result.requestedDisplayNameIgnored),
+      requestedTesterLabelIgnored: Boolean(result.requestedTesterLabelIgnored),
       identity: {
         grantId: result.grantId || result.accessLink?.grant_id || identityInput.grantId,
         resolvedFrom: result.resolvedFrom,
@@ -226,12 +228,16 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
         displayName: result.player.display_name,
         testerLabel: result.player.tester_label,
         playerRoundId: result.playerRound?.id || null,
+        requestedDisplayNameIgnored: Boolean(result.requestedDisplayNameIgnored),
+        requestedTesterLabelIgnored: Boolean(result.requestedTesterLabelIgnored),
       },
       round: formatRound(result.round),
       player: {
         ...formatPlayer(result.player),
       },
-      message: 'Multiplayer identity resolved.',
+      message: result.requestedDisplayNameIgnored || result.requestedTesterLabelIgnored
+        ? `You are linked as ${result.player.display_name}. Requested labels were ignored in favor of the linked identity.`
+        : `You are linked as ${result.player.display_name}.`,
       timestamp: nowIso(),
     });
   } catch (error) {
@@ -525,7 +531,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.97a game-service skeleton.',
+    message: 'Route not implemented in the v0.41.98 game-service skeleton.',
   });
 });
 
@@ -689,11 +695,17 @@ function normalizeDevProofResetInput(body) {
 }
 
 function normalizeDevIdentityInput(body) {
+  const requestedTesterLabel = normalizeDevTesterLabel(body.testerLabel || body.playerDisplayName || body.displayName || null);
+  const requestedDisplayName = normalizeDevDisplayName(body.displayName || body.playerDisplayName || body.testerLabel || '', '');
   return {
     roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
     grantId: normalizeText(body.grantId || body.currentGrantId || body.accessGrant?.grantId || body.accessGrant?.currentGrantId || ''),
-    testerLabel: normalizeDevTesterLabel(body.testerLabel || body.accessGrant?.testerLabel || body.displayName),
-    displayName: normalizeDevDisplayName(body.displayName || body.playerDisplayName || body.testerLabel || body.accessGrant?.testerLabel),
+    testerLabel: requestedTesterLabel,
+    displayName: requestedDisplayName || DEV_ROUND_DEFAULTS.displayName,
+    requestedTesterLabel,
+    requestedDisplayName: requestedDisplayName || null,
+    hasRequestedTesterLabel: Boolean(requestedTesterLabel),
+    hasRequestedDisplayName: Boolean(requestedDisplayName),
   };
 }
 
@@ -1672,6 +1684,7 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
     }
   }
 
+  const impersonationFlags = resolveIdentityOverrideFlags(identityInput, player);
   const playerRound = await getOrCreatePlayerRound(round.id, player.id);
   await getOrCreatePlayerState(round.id, player.id);
   await getOrCreatePlayerBuildings(round.id, player.id);
@@ -1697,6 +1710,8 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
     accessLinkCreated,
     resolvedFrom,
     grantId: identityInput.grantId || accessLink?.grant_id || null,
+    requestedDisplayNameIgnored: impersonationFlags.requestedDisplayNameIgnored,
+    requestedTesterLabelIgnored: impersonationFlags.requestedTesterLabelIgnored,
   };
 }
 
@@ -1740,10 +1755,29 @@ function isInviteGrantActive(inviteGrant) {
   return (status === 'claimed' || status === 'active' || status === 'used') && claimCount > 0;
 }
 
-function resolveInviteGrantLabels(inviteGrant, identityInput = {}) {
+function resolveIdentityOverrideFlags(identityInput, player) {
+  const requestedDisplayName = normalizeDevDisplayName(identityInput?.requestedDisplayName || identityInput?.displayName || identityInput?.testerLabel || '');
+  const requestedTesterLabel = normalizeDevTesterLabel(identityInput?.requestedTesterLabel || identityInput?.testerLabel || identityInput?.displayName || null);
+  const linkedDisplayName = normalizeDevDisplayName(player?.display_name || requestedDisplayName);
+  const linkedTesterLabel = normalizeDevTesterLabel(player?.tester_label || null);
+  const displayNameMatches = requestedDisplayName && (requestedDisplayName === linkedDisplayName || requestedDisplayName === linkedTesterLabel);
+  const testerLabelMatches = requestedTesterLabel && (requestedTesterLabel === linkedTesterLabel || requestedTesterLabel === linkedDisplayName);
+
   return {
-    testerLabel: normalizeDevTesterLabel(inviteGrant?.tester_label || identityInput.testerLabel || identityInput.displayName),
-    displayName: normalizeDevDisplayName(inviteGrant?.tester_label || identityInput.displayName || identityInput.testerLabel),
+    requestedDisplayNameIgnored: Boolean(identityInput?.hasRequestedDisplayName && requestedDisplayName && !displayNameMatches),
+    requestedTesterLabelIgnored: Boolean(identityInput?.hasRequestedTesterLabel && requestedTesterLabel && !testerLabelMatches),
+  };
+}
+
+function resolveInviteGrantLabels(inviteGrant, identityInput = {}) {
+  const authoritativeTesterLabel = normalizeDevTesterLabel(inviteGrant?.tester_label || null);
+  const requestedTesterLabel = normalizeDevTesterLabel(identityInput.requestedTesterLabel || identityInput.testerLabel || identityInput.displayName);
+  const requestedDisplayName = normalizeDevDisplayName(identityInput.requestedDisplayName || identityInput.displayName || identityInput.testerLabel);
+  const testerLabel = authoritativeTesterLabel || requestedTesterLabel || requestedDisplayName;
+  const displayName = authoritativeTesterLabel || requestedDisplayName || testerLabel;
+  return {
+    testerLabel: normalizeDevTesterLabel(testerLabel),
+    displayName: normalizeDevDisplayName(displayName),
   };
 }
 
@@ -1756,7 +1790,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
   const byGrantId = await fetchSingleRow(
     'multiplayer_players',
     playerColumns,
-    (query) => query.eq('created_from_grant_id', grantId).eq('status', 'active')
+    (query) => query.eq('created_from_grant_id', grantId)
   );
 
   if (byGrantId) {
@@ -1766,40 +1800,12 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     };
   }
 
-  if (testerLabel) {
-    const byTesterLabel = await fetchSingleRow(
-      'multiplayer_players',
-      playerColumns,
-      (query) => query.eq('tester_label', testerLabel).eq('status', 'active')
-    );
-
-    if (byTesterLabel) {
-      return {
-        row: byTesterLabel,
-        created: false,
-      };
-    }
-  }
-
-  const byDisplayName = await fetchSingleRow(
-    'multiplayer_players',
-    playerColumns,
-    (query) => query.eq('display_name', displayName).eq('status', 'active')
-  );
-
-  if (byDisplayName) {
-    return {
-      row: byDisplayName,
-      created: false,
-    };
-  }
-
   const inserted = await insertSingleRow('multiplayer_players', {
     display_name: displayName,
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.97a invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.98 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -1879,7 +1885,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.97a dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.98 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1917,7 +1923,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.97a dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.98 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {

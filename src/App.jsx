@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.97a";
+const PROTOTYPE_VERSION = "v0.41.98";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1324,7 +1324,7 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
 function multiplayerIdentityFailureMessage(status, errorCode) {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.97a this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.98 this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
@@ -1338,7 +1338,7 @@ function multiplayerIdentityFailureMessage(status, errorCode) {
 function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.97a this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.98 this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
@@ -2578,11 +2578,14 @@ export default function App() {
           playerRoundId: identity.playerRoundId || null,
           displayName: identity.displayName || displayName,
           testerLabel: identity.testerLabel || testerLabel,
+          requestedDisplayNameIgnored: Boolean(identity.requestedDisplayNameIgnored),
+          requestedTesterLabelIgnored: Boolean(identity.requestedTesterLabelIgnored),
         } : null;
+        const ignoredRequestLabels = Boolean(identity?.requestedDisplayNameIgnored || identity?.requestedTesterLabelIgnored);
         setMultiplayerIdentityState({
           loading: false,
           error: "",
-          message: summary ? `Resolved multiplayer identity for ${summary.displayName}.` : "",
+          message: summary ? `You are linked as ${summary.displayName}.${ignoredRequestLabels ? " Requested labels were ignored in favor of the invite-token identity." : ""}` : "",
           fetchedAt,
           summary,
         });
@@ -6643,6 +6646,10 @@ export default function App() {
       const identityResolved = Boolean(identitySummary?.playerId);
       const playerId = identitySummary?.playerId || "";
       const playerRoundId = identitySummary?.playerRoundId || "";
+      const currentIdentityLabel = identityResolved ? displayName : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting invite-token identity resolution" : displayName;
+      const identityGuardLabel = identityResolved
+        ? (identitySummary?.requestedDisplayNameIgnored || identitySummary?.requestedTesterLabelIgnored ? "Requested labels ignored" : "No override detected")
+        : "Not resolved yet";
       const playerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
       const factoryCount = Number(roundSummary?.factoryCount ?? 0);
       const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
@@ -6693,6 +6700,7 @@ export default function App() {
             ["Access mode", testerAccessModeLabel(testerAccessRecord)],
             ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
             ["Tester label", testerLabel || "—"],
+            ["Current browser identity", currentIdentityLabel],
             ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
             ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
             ["Access source", testerAccessRecord?.accessMode === "invite-token" ? "Invite-token gate" : "Development fallback"],
@@ -6711,9 +6719,10 @@ export default function App() {
           ], "This health check only reports service readiness and never exposes secrets.")}          
           {renderStatusCard("Identity Status", [
             ["Resolved state", identityResolved ? "Resolved" : multiplayerIdentityState.loading ? "Resolving..." : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting resolve" : "Fallback ready"],
-            ["Display name", displayName],
+            ["Current browser identity", currentIdentityLabel],
             ["Tester label", testerLabel || "—"],
             ["Resolved from", resolvedFrom],
+            ["Impersonation guard", identityGuardLabel],
             ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
             ["Player id", playerId ? maskStableIdentifier(playerId) : "—"],
             ["Player round id", playerRoundId ? maskStableIdentifier(playerRoundId) : "—"],
@@ -6747,15 +6756,17 @@ export default function App() {
         {players.length ? <div className="mt-3 grid gap-2">
           {players.map((player) => {
             const details = playerSummary(player);
-            return <div key={player.id} className="border border-orange-950 bg-black/50 p-2">
+            const isCurrentPlayer = identityResolved && player.id === playerId;
+            return <div key={player.id} className={`border p-2 ${isCurrentPlayer ? "border-cyan-300 bg-cyan-950/15" : "border-orange-950 bg-black/50"}`}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-bold text-orange-200">{details.title}</span>
+                {isCurrentPlayer ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">You</span> : null}
                 {details.testerLabel ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{details.testerLabel}</span> : null}
                 {details.playerId ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Player {details.playerId}</span> : null}
               </div>
               <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
               <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
-              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount} · Queued: {details.queuedCount} · Processed: {details.processedCount}{details.playerRoundId ? ` · Player round ${details.playerRoundId}` : ""}</div>
+              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount} · Queued: {details.queuedCount} · Processed: {details.processedCount}{isCurrentPlayer ? " · Current browser identity" : ""}</div>
             </div>;
           })}
         </div> : null}
