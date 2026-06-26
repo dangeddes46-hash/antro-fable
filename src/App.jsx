@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.95";
+const PROTOTYPE_VERSION = "v0.41.96";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1312,14 +1312,27 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
   return "Shared multiplayer preview could not be loaded.";
 }
 
-function multiplayerDevActionFailureMessage(status, errorCode) {
+function multiplayerIdentityFailureMessage(status, errorCode) {
+  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
+  if (errorCode === "identity_not_provided") return "Provide an active invite-grant identity before resolving multiplayer access.";
+  if (errorCode === "grant_not_found") return "No active access link was found for that grant.";
+  if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
+  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
+  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
+    return "Shared multiplayer identity could not be resolved.";
+  }
+  return "Shared multiplayer identity could not be resolved.";
+}
+
+function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
+  if (errorCode === "identity_not_provided") return "Resolve multiplayer identity before sending a server-authorised proof action.";
+  if (errorCode === "grant_not_found") return "The multiplayer identity grant could not be found.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
-  if (errorCode === "player_not_found") return "DEV Player One was not found in the shared round.";
-  if (errorCode === "player_not_joined") return "DEV Player One is not joined to the shared round.";
+  if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;
+  if (errorCode === "player_not_joined") return `${playerLabel} is not joined to the shared round.`;
   if (errorCode === "tick_in_progress") return "A manual DEV tick is already running.";
-  if (errorCode === "unsupported_proof_target") return "The proof reset endpoint only targets the shared DEV proof round.";
   if (errorCode === "queue_build_factory_failed") return "The factory order could not be queued.";
   if (errorCode === "manual_tick_failed") return "The manual DEV tick could not be completed.";
   if (errorCode === "build_factory_failed") return "The legacy immediate proof could not be completed.";
@@ -1649,6 +1662,7 @@ export default function App() {
   const [testerAccessError, setTesterAccessError] = useState("");
   const [testerAccessSubmitting, setTesterAccessSubmitting] = useState(false);
   const [multiplayerPreviewState, setMultiplayerPreviewState] = useState({ loading: false, error: "", fetchedAt: null, summary: null });
+  const [multiplayerIdentityState, setMultiplayerIdentityState] = useState({ loading: false, error: "", fetchedAt: null, summary: null });
   const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
@@ -2318,7 +2332,37 @@ export default function App() {
     setTesterAccessError("");
     setTesterAccessSubmitting(false);
     setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
+    setMultiplayerIdentityState({ loading: false, error: "", fetchedAt: null, summary: null });
     setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+  }
+  function multiplayerIdentityFallbackSummary() {
+    const accessGrant = testerAccessRecord?.accessGrant || null;
+    const testerLabel = cleanSingleLineText(testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "", 80).trim() || null;
+    const displayName = cleanSingleLineText(testerLabel || "DEV Player One", 80).trim() || "DEV Player One";
+    return {
+      grantId: null,
+      resolvedFrom: testerAccessRecord?.accessMode === "invite-token" ? "pending-resolution" : "development-fallback",
+      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+      roundName: "Shared Multiplayer DEV",
+      roundStatus: "draft",
+      currentTick: 0,
+      playerId: null,
+      playerRoundId: null,
+      displayName,
+      testerLabel,
+    };
+  }
+  function multiplayerIdentityRequestBody() {
+    const resolved = multiplayerIdentityState.summary || null;
+    const accessGrant = testerAccessRecord?.accessGrant || null;
+    const testerLabel = cleanSingleLineText(resolved?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "", 80).trim() || null;
+    const displayName = cleanSingleLineText(resolved?.displayName || testerLabel || "DEV Player One", 80).trim() || "DEV Player One";
+    return {
+      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+      grantId: resolved?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || null,
+      testerLabel,
+      displayName,
+    };
   }
   async function refreshMultiplayerPreview() {
     if (multiplayerPreviewState.loading) return;
@@ -2374,6 +2418,83 @@ export default function App() {
       setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
     }
   }
+  async function refreshMultiplayerIdentity() {
+    if (multiplayerIdentityState.loading) return;
+    if (!testerAccessRecord?.accepted) {
+      setMultiplayerIdentityState({ loading: false, error: "", fetchedAt: null, summary: null });
+      return;
+    }
+
+    if (testerAccessRecord?.accessMode !== "invite-token" || !testerAccessRecord?.accessGrant?.grantId) {
+      setMultiplayerIdentityState({
+        loading: false,
+        error: "",
+        fetchedAt: Date.now(),
+        summary: multiplayerIdentityFallbackSummary(),
+      });
+      return;
+    }
+
+    if (!GAME_SERVICE_URL) {
+      setMultiplayerIdentityState({ loading: false, error: multiplayerIdentityFailureMessage(503, "service_unavailable"), fetchedAt: Date.now(), summary: null });
+      return;
+    }
+
+    setMultiplayerIdentityState((prev) => ({ ...prev, loading: true, error: "" }));
+    const fetchedAt = Date.now();
+    try {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
+      try {
+        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/identity/resolve-player`, {
+          method: "POST",
+          headers: { "Accept": "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+            grantId: testerAccessRecord.accessGrant.grantId,
+            testerLabel: testerAccessRecord.accessGrant.testerLabel || testerAccessRecord.testerLabel || null,
+            displayName: testerAccessRecord.accessGrant.testerLabel || testerAccessRecord.testerLabel || "DEV Player One",
+          }),
+          signal: controller?.signal,
+        });
+        const text = await response.text();
+        let result = {};
+        if (text) {
+          try {
+            result = JSON.parse(text);
+          } catch {
+            result = { raw: text };
+          }
+        }
+
+        if (!response.ok || result?.ok === false) {
+          const errorCode = result?.error || null;
+          const errorMessage = multiplayerIdentityFailureMessage(response.status, errorCode);
+          setMultiplayerIdentityState({ loading: false, error: errorMessage, fetchedAt, summary: null });
+          return;
+        }
+
+        const identity = result?.identity || null;
+        const summary = identity ? {
+          grantId: identity.grantId || null,
+          resolvedFrom: identity.resolvedFrom || "invite_grant",
+          roundKey: identity.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY,
+          roundName: identity.roundName || "Shared Multiplayer DEV",
+          roundStatus: identity.roundStatus || null,
+          currentTick: Number(identity.currentTick ?? 0),
+          playerId: identity.playerId || null,
+          playerRoundId: identity.playerRoundId || null,
+          displayName: identity.displayName || testerAccessRecord.accessGrant.testerLabel || testerAccessRecord.testerLabel || "DEV Player One",
+          testerLabel: identity.testerLabel || testerAccessRecord.accessGrant.testerLabel || testerAccessRecord.testerLabel || null,
+        } : null;
+        setMultiplayerIdentityState({ loading: false, error: "", fetchedAt, summary });
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      setMultiplayerIdentityState({ loading: false, error: multiplayerIdentityFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
+    }
+  }
   async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage }) {
     if (multiplayerDevActionState.loading) return;
     if (!testerAccessRecord?.accepted) return;
@@ -2414,7 +2535,7 @@ export default function App() {
 
         if (!response.ok || result?.ok === false) {
           const errorCode = result?.error || null;
-          const errorMessage = multiplayerDevActionFailureMessage(response.status, errorCode);
+          const errorMessage = multiplayerDevActionFailureMessage(response.status, errorCode, multiplayerIdentityState.summary?.displayName || multiplayerIdentityState.summary?.testerLabel || "the selected player");
           setMultiplayerDevActionState({
             loading: false,
             error: errorMessage,
@@ -2453,11 +2574,7 @@ export default function App() {
     return submitMultiplayerDevAction({
       endpointPath: "/api/dev/actions/queue-build-factory",
       actionType: "dev_queue_build_factory",
-      requestBody: {
-        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-        displayName: "DEV Player One",
-        amount: 1,
-      },
+      requestBody: { ...multiplayerIdentityRequestBody(), amount: 1 },
       successMessage: "Factory build order queued for next tick.",
     });
   }
@@ -2472,14 +2589,11 @@ export default function App() {
     });
   }
   async function submitMultiplayerDevResetProofRound() {
-    if (!confirm("Reset the Shared Multiplayer DEV proof round? This only resets the proof state for this browser-run round and cannot be undone.")) return;
+    if (!confirm("Reset the Shared Multiplayer DEV proof round for all active players? This only resets the proof state in this browser-run round and cannot be undone.")) return;
     return submitMultiplayerDevAction({
       endpointPath: "/api/dev/reset-proof-round",
       actionType: "dev_reset_proof_round",
-      requestBody: {
-        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-        displayName: "DEV Player One",
-      },
+      requestBody: multiplayerIdentityRequestBody(),
       successMessage: "Shared DEV proof state reset.",
     });
   }
@@ -2487,11 +2601,7 @@ export default function App() {
     return submitMultiplayerDevAction({
       endpointPath: "/api/dev/actions/build-factory",
       actionType: "dev_build_factory",
-      requestBody: {
-        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-        displayName: "DEV Player One",
-        amount: 1,
-      },
+      requestBody: { ...multiplayerIdentityRequestBody(), amount: 1 },
       successMessage: "Legacy immediate proof applied.",
     });
   }
@@ -2511,6 +2621,7 @@ export default function App() {
       setTesterAccessCommentDraft("");
       setTesterAccessError("");
       setTesterAccessSubmitting(false);
+      setMultiplayerIdentityState({ loading: false, error: "", fetchedAt: null, summary: null });
       return;
     }
 
@@ -2573,6 +2684,7 @@ export default function App() {
         setTesterAccessDraft("");
         setTesterAccessCommentDraft("");
         setTesterAccessError("");
+        setMultiplayerIdentityState({ loading: false, error: "", fetchedAt: null, summary: null });
       } finally {
         if (timeoutId) window.clearTimeout(timeoutId);
       }
@@ -2632,8 +2744,9 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!hydrated || !testerAccessRecord?.accepted) return;
+    refreshMultiplayerIdentity();
     refreshMultiplayerPreview();
-  }, [hydrated, testerAccessRecord?.accepted]);
+  }, [hydrated, testerAccessRecord?.accepted, testerAccessRecord?.accessMode, testerAccessRecord?.accessGrant?.grantId, testerAccessRecord?.accessGrant?.testerLabel, testerAccessRecord?.testerLabel]);
 
   useEffect(() => { if (!hydrated) return; const payload = currentSavePayload(); safeWriteSave(payload); if (activeRoundSlotKey) safeWriteRoundSlot(activeRoundSlotKey, roundSlotPayload(activeRoundSlotKey)); }, [hydrated, activeRoundSlotKey, playerNameSetupComplete, entryStage, selectedRoundKey, selectedSpeciesKey, glwSeedMode, glwRaceRegistered, page, adminMode, displayModel, log, worldReports, buildForm, trainForm, mineAllocation, factoryAllocation, buildSpeedFactor, useBarracksSpeedMinerals, pageCompletionNotice, scienceOrder, scienceLevels, roundProfile, roundSettings, gameName, roundStartedAt, selectedTargetName, disableTargetTurrets, spyTarget, spies, mercenaries, alliance, shareAllianceProfile, allianceShareEnabledMembers, allianceAnnouncementDraft, allianceSubPage, donateAllianceLandAmount, allianceBankBuildQty, allianceBankSpeedFactor, allianceBankDepositAmount, lrcCardsAmount, lrcEnergyAmount, lrcMineralName, lrcMineralAmount, lrcTargetType, lrcTargetName, activeLrcSequence, exploreHours, exploreCards, newsFilter, newsPage, battleLogPage, battleLogOpponent, botDifficulty, onlineSort, nexusMineralName, nexusMineralAmount, demoMemberName, diplomacyTargetType, diplomacyTargetName, activeWars, alliedStatuses, diplomacyRequests, retalRecords, grievances, battleReport, lastUpdateSummary, outgoingMissiles, incomingMissiles, messages, marketOrders, processedBattleKeys, player, demoOpponents]);
 
@@ -4265,6 +4378,22 @@ export default function App() {
         multiplayerPreviewRecentPublicEvents: Array.isArray(multiplayerPreviewState.summary?.recentPublicEvents) ? multiplayerPreviewState.summary.recentPublicEvents : [],
         multiplayerPreviewRecentTickLogs: Array.isArray(multiplayerPreviewState.summary?.recentTickLogs) ? multiplayerPreviewState.summary.recentTickLogs : [],
         multiplayerPreviewError: multiplayerPreviewState.error || null,
+      },
+      multiplayerIdentity: {
+        lastMultiplayerIdentityFetchAt: multiplayerIdentityState.fetchedAt || null,
+        lastMultiplayerIdentityFetchAtIso: multiplayerIdentityState.fetchedAt ? new Date(multiplayerIdentityState.fetchedAt).toISOString() : null,
+        multiplayerIdentityLoading: Boolean(multiplayerIdentityState.loading),
+        multiplayerIdentityError: multiplayerIdentityState.error || null,
+        multiplayerIdentityDisplayName: multiplayerIdentityState.summary?.displayName || null,
+        multiplayerIdentityTesterLabel: multiplayerIdentityState.summary?.testerLabel || null,
+        multiplayerIdentityGrantId: multiplayerIdentityState.summary?.grantId || null,
+        multiplayerIdentityPlayerId: multiplayerIdentityState.summary?.playerId || null,
+        multiplayerIdentityResolvedFrom: multiplayerIdentityState.summary?.resolvedFrom || null,
+        multiplayerIdentityRoundKey: multiplayerIdentityState.summary?.roundKey || null,
+        multiplayerIdentityRoundName: multiplayerIdentityState.summary?.roundName || null,
+        multiplayerIdentityRoundStatus: multiplayerIdentityState.summary?.roundStatus || null,
+        multiplayerIdentityCurrentTick: multiplayerIdentityState.summary?.currentTick ?? null,
+        multiplayerIdentityPlayerRoundId: multiplayerIdentityState.summary?.playerRoundId || null,
       },
       lastMultiplayerDevActionAt: multiplayerDevActionState.lastActionAt || null,
       lastMultiplayerDevActionAtIso: multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toISOString() : null,
@@ -6352,6 +6481,15 @@ export default function App() {
       const roundId = round?.id || "—";
       const lastFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not refreshed yet";
       const lastDevActionLabel = multiplayerDevActionState.lastActionAt ? new Date(multiplayerDevActionState.lastActionAt).toLocaleString() : "Never";
+      const identitySummary = multiplayerIdentityState.summary || (testerAccessRecord?.accepted && testerAccessRecord?.accessMode !== "invite-token" ? multiplayerIdentityFallbackSummary() : null);
+      const identityLabel = identitySummary?.displayName || (multiplayerIdentityState.loading ? "Resolving multiplayer identity..." : testerAccessRecord?.accessMode === "invite-token" ? "Invite grant pending resolution" : "DEV Player One");
+      const identitySourceLabel = identitySummary?.resolvedFrom === "invite_grant"
+        ? "invite grant"
+        : identitySummary?.resolvedFrom === "development-fallback"
+          ? "development fallback"
+          : multiplayerIdentityState.loading
+            ? "resolving"
+            : "unknown";
       const playerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
       const factoryCount = Number(roundSummary?.factoryCount ?? 0);
       const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
@@ -6374,12 +6512,15 @@ export default function App() {
           power: compactFmt(Number(state.power || 0)),
           money: compactFmt(Number(state.money || 0)),
           factoryCount: fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0)))),
+          queuedCount: fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0)))),
+          processedCount: fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0)))),
         };
       };
       return <Panel title="Shared Multiplayer DEV">
-        <p className="text-orange-200 mb-3">Queue the order first. The manual tick applies due orders and advances the proof round. Reset clears only the shared DEV proof state so the sequence can be replayed.</p>
+        <p className="text-orange-200 mb-3">Resolved identity: <span className="font-bold text-orange-100">{identityLabel}</span>. The manual tick applies due orders and advances the proof round. Reset clears the shared proof round for all active players.</p>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={previewBusy || actionBusy}>{previewBusy ? "Refreshing preview..." : "Refresh preview"}</button>
+          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerIdentity} disabled={multiplayerIdentityState.loading || actionBusy}>{multiplayerIdentityState.loading ? "Resolving identity..." : "Refresh identity"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing order..." : "Queue +1 factory order"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual tick..." : "Run manual DEV tick"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevResetProofRound} disabled={actionBusy || previewBusy}>{actionBusy && multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? "Resetting proof state..." : "Reset proof state"}</button>
@@ -6389,6 +6530,8 @@ export default function App() {
         </div>
         <p className="text-xs text-orange-500 mb-3">This sends an order to the game service. The browser does not change the database directly.</p>
         <OldTable rows={[
+          ["Multiplayer identity", identityLabel],
+          ["Identity source", identitySourceLabel],
           ["Service", GAME_SERVICE_URL || "Not configured"],
           ["Round key", roundKey],
           ["Round name", roundName],
@@ -6407,6 +6550,7 @@ export default function App() {
         ]} />
         {previewBusy ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer preview...</div> : null}
         {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
+        {multiplayerIdentityState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerIdentityState.error}</div> : null}
         {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
         {multiplayerDevActionState.lastActionMessage ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerDevActionState.lastActionMessage}</div> : null}
         {!previewBusy && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
@@ -6420,7 +6564,7 @@ export default function App() {
               </div>
               <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
               <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
-              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount}</div>
+              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount} · Queued: {details.queuedCount} · Processed: {details.processedCount}</div>
             </div>;
           })}
         </div> : null}

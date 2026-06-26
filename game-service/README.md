@@ -1,4 +1,4 @@
-# AntrophAI v0.41.95 game-service dev seed/read/queued-action/manual-tick/reset proof
+# AntrophAI v0.41.96 game-service dev seed/read/queued-action/manual-tick/reset/identity proof
 
 This folder contains the first standalone multiplayer game-service proof for AntrophAI.
 
@@ -25,6 +25,7 @@ Important:
 - `POST /api/dev/actions/queue-build-factory` when dev endpoints are enabled
 - `POST /api/dev/tick/manual-run` when dev endpoints are enabled
 - `POST /api/dev/reset-proof-round` when dev endpoints are enabled
+- `POST /api/dev/identity/resolve-player` when dev endpoints are enabled
 
 ## Local setup
 

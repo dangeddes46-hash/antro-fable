@@ -1,8 +1,8 @@
 {
   "name": "antrophai-game-service",
   "private": true,
-  "version": "0.41.95",
-  "description": "Standalone multiplayer game-service dev seed/read/queued-action/manual-tick/reset proof for AntrophAI v0.41.95",
+  "version": "0.41.96",
+  "description": "Standalone multiplayer game-service dev seed/read/queued-action/manual-tick/reset/identity proof for AntrophAI v0.41.96",
   "type": "module",
   "engines": {
     "node": ">=18"

@@ -1,4 +1,4 @@
-# Hosted handoff notes - AntrophAI v0.41.95
+# Hosted handoff notes - AntrophAI v0.41.96
 
 ## Read this first
 
@@ -10,7 +10,7 @@ v0.41.92 adds a read-only Shared Multiplayer DEV launcher preview. It reads host
 
 v0.41.94 adds the first dev-only queued action and manual tick proof. The browser can queue +1 factory for DEV Player One, and the hosted game service mutates the canonical multiplayer tables only when a manual DEV tick runs.
 
-v0.41.95 adds a dev-only proof reset control. It clears only the proof state for DEV Player One so the queue/manual-tick sequence can be replayed without touching browser-local saves.
+v0.41.96 adds a dev-only token-to-player identity proof. It resolves an already-redeemed invite grant to a multiplayer player in the hosted game service, and the proof reset control now clears the shared DEV proof round for all active players without touching browser-local saves.
 
 v0.41.87 is the next planning/docs-only pass for the future multiplayer architecture. It does not add multiplayer code yet and it does not change gameplay or the current token-service runtime.
 
@@ -109,4 +109,4 @@ Random game outcomes should be resolved server-side or through deterministic see
 
 ## Version
 
-Current handoff version: v0.41.95
+Current handoff version: v0.41.96

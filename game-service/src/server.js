@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.95';
+const SERVICE_VERSION = 'v0.41.96';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -137,7 +137,7 @@ app.get('/api/version', (req, res) => {
     localEnvLoaded: LOCAL_ENV_LOADED,
     supabaseConfigured: SUPABASE_CONFIGURED,
     devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
-    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints, the queued-action/manual-tick proof, and the proof-reset endpoint are temporary scaffolding.',
+    notes: 'Dev-only game-service skeleton. Seed/read proof endpoints, the queued-action/manual-tick proof, the proof-reset endpoint, and the invite-grant identity resolver are temporary scaffolding.',
     timestamp: nowIso(),
   });
 });
@@ -169,6 +169,63 @@ app.post('/api/dev/seed-round', requireDevEndpoints, async (req, res) => {
     });
   } catch (error) {
     sendErrorResponse(res, error, 'seed_round_failed');
+  }
+});
+
+app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev identity resolver.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const identityInput = normalizeDevIdentityInput(req.body || {});
+    if (!identityInput.grantId) {
+      res.status(400).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'identity_not_provided',
+        message: 'Provide an active grantId to resolve a multiplayer identity.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const result = await resolveDevPlayerIdentity(identityInput, { requireGrant: true });
+
+    res.status(200).json({
+      ok: true,
+      identity: {
+        grantId: result.accessLink?.grant_id || identityInput.grantId,
+        resolvedFrom: result.resolvedFrom,
+        roundKey: result.round.round_key,
+        roundName: result.round.round_name,
+        roundStatus: result.round.status,
+        currentTick: Number(result.round.current_tick || 0),
+        playerId: result.player.id,
+        displayName: result.player.display_name,
+        testerLabel: result.player.tester_label,
+        playerRoundId: result.playerRound?.id || null,
+      },
+      round: formatRound(result.round),
+      player: {
+        ...formatPlayer(result.player),
+      },
+      message: 'Multiplayer identity resolved.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'resolve_identity_failed');
   }
 });
 
@@ -332,6 +389,7 @@ app.post('/api/dev/reset-proof-round', requireDevEndpoints, async (req, res) => 
         factoryCount: result.player.factoryCount,
       },
       proofState: {
+        resetPlayerCount: result.resetPlayerCount,
         cancelledActionCount: result.cancelledActionCount,
         resetTickLogCount: result.resetTickLogCount,
       },
@@ -456,7 +514,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.95 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.96 game-service skeleton.',
   });
 });
 
@@ -601,9 +659,9 @@ function normalizeSeedInput(body) {
 }
 
 function normalizeDevBuildFactoryInput(body) {
+  const identity = normalizeDevIdentityInput(body);
   return {
-    roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
-    displayName: normalizeText(body.displayName || DEV_ROUND_DEFAULTS.displayName),
+    ...identity,
     amount: clampDevBuildAmount(body.amount),
     idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
   };
@@ -616,17 +674,26 @@ function normalizeDevManualTickInput(body) {
 }
 
 function normalizeDevProofResetInput(body) {
-  const roundKey = normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey);
-  const displayName = normalizeText(body.displayName || DEV_ROUND_DEFAULTS.displayName);
+  return normalizeDevIdentityInput(body);
+}
 
-  if (roundKey !== DEV_ROUND_DEFAULTS.roundKey || displayName !== DEV_ROUND_DEFAULTS.displayName) {
-    throw createServiceError(400, 'unsupported_proof_target', 'This reset endpoint only targets the shared DEV proof round for DEV Player One.');
-  }
-
+function normalizeDevIdentityInput(body) {
   return {
-    roundKey,
-    displayName,
+    roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
+    grantId: normalizeText(body.grantId || body.currentGrantId || body.accessGrant?.grantId || body.accessGrant?.currentGrantId || ''),
+    testerLabel: normalizeDevTesterLabel(body.testerLabel || body.accessGrant?.testerLabel || body.displayName),
+    displayName: normalizeDevDisplayName(body.displayName || body.playerDisplayName || body.testerLabel || body.accessGrant?.testerLabel),
   };
+}
+
+function normalizeDevDisplayName(value, fallback = DEV_ROUND_DEFAULTS.displayName) {
+  const text = normalizeText(String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' '));
+  return text.slice(0, 80) || fallback;
+}
+
+function normalizeDevTesterLabel(value, fallback = null) {
+  const text = normalizeText(String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' '));
+  return text.slice(0, 128) || fallback || null;
 }
 
 function clampDevBuildAmount(value) {
@@ -713,11 +780,12 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
-  const recentActions = await fetchRows(
+  const actionRows = await fetchRows(
     'multiplayer_action_queue',
     'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
-    (query) => query.eq('round_id', round.id).order('created_at', { ascending: false }).limit(8)
+    (query) => query.eq('round_id', round.id).order('created_at', { ascending: false })
   );
+  const recentActions = actionRows.slice(0, 8);
   const recentTickLogs = await fetchRows(
     'multiplayer_tick_log',
     'id, round_id, tick, status, started_at, completed_at, summary, error_message, created_at, updated_at',
@@ -732,12 +800,21 @@ async function readDevRoundSummary(roundKey) {
   const stateByPlayerId = new Map(states.map((state) => [state.player_id, state]));
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
-  const actionSummary = summarizeActionQueueRows(recentActions, round.current_tick);
+  const actionsByPlayerId = groupRowsByKey(actionRows, 'player_id');
+  const actionSummary = summarizeActionQueueRows(actionRows, round.current_tick);
   const formattedPlayers = players
     .map((player) => ({
       id: player.id,
       displayName: player.display_name,
       testerLabel: player.tester_label,
+      queuedCount: (() => {
+        const playerActionSummary = summarizeActionQueueRows(actionsByPlayerId.get(player.id) || [], round.current_tick);
+        return playerActionSummary.queued + playerActionSummary.processing;
+      })(),
+      processedCount: (() => {
+        const playerActionSummary = summarizeActionQueueRows(actionsByPlayerId.get(player.id) || [], round.current_tick);
+        return playerActionSummary.processed;
+      })(),
       state: formatState(stateByPlayerId.get(player.id)),
       buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
       armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
@@ -1291,29 +1368,43 @@ async function resetDevProofRound(resetInput) {
   const { round, player } = await loadDevRoundPlayerContext(resetInput);
   const resetAt = nowIso();
   const previousTick = Number(round.current_tick || 0);
-  const factoryRow = await fetchSingleRow(
-    'multiplayer_player_buildings',
-    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
-    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+  const activePlayerRounds = await fetchRows(
+    'multiplayer_player_rounds',
+    'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('status', 'active').order('created_at', { ascending: true })
   );
-  const previousFactoryCount = Math.max(
-    0,
-    Math.floor(Number(factoryRow?.effective_count ?? factoryRow?.count ?? 0))
-  );
+  const playerIds = activePlayerRounds.map((row) => row.player_id);
+  const players = playerIds.length > 0
+    ? await fetchRows(
+        'multiplayer_players',
+        'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+        (query) => query.in('id', playerIds)
+      )
+    : [player];
+  const previousFactoryCounts = new Map();
 
-  await upsertRow('multiplayer_player_buildings', {
-    round_id: round.id,
-    player_id: player.id,
-    building_key: 'factory',
-    count: 0,
-    effective_count: 0,
-    updated_at: resetAt,
-  }, 'player_id,round_id,building_key');
+  for (const currentPlayer of players) {
+    const factoryRow = await fetchSingleRow(
+      'multiplayer_player_buildings',
+      'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', currentPlayer.id).eq('building_key', 'factory')
+    );
+    const previousFactoryCount = Math.max(0, Math.floor(Number(factoryRow?.effective_count ?? factoryRow?.count ?? 0)));
+    previousFactoryCounts.set(currentPlayer.id, previousFactoryCount);
+    await upsertRow('multiplayer_player_buildings', {
+      round_id: round.id,
+      player_id: currentPlayer.id,
+      building_key: 'factory',
+      count: 0,
+      effective_count: 0,
+      updated_at: resetAt,
+    }, 'player_id,round_id,building_key');
+  }
 
   const queuedActions = await fetchRows(
     'multiplayer_action_queue',
     'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
-    (query) => query.eq('round_id', round.id).eq('player_id', player.id).in('status', ['queued', 'processing']).order('created_at', { ascending: true })
+    (query) => query.eq('round_id', round.id).eq('action_type', 'dev_queue_build_factory').in('status', ['queued', 'processing']).order('created_at', { ascending: true })
   );
   const cancelledActionIds = [];
   for (const action of queuedActions) {
@@ -1368,13 +1459,15 @@ async function resetDevProofRound(resetInput) {
     visibility: 'public',
     actor_player_id: player.id,
     title: 'Proof state reset',
-    body: `${player.display_name} reset the Shared Multiplayer DEV proof state. Queued proof actions were cancelled and the next manual tick will start again at tick 1.`,
+    body: `${player.display_name} reset the Shared Multiplayer DEV proof state for all active players in the round. Queued proof actions were cancelled and the next manual tick will start again at tick 1.`,
     payload: {
       roundKey: round.round_key,
       playerDisplayName: player.display_name,
       previousTick,
       resetTick: 0,
-      previousFactoryCount,
+      resetPlayerCount: players.length,
+      playerDisplayNames: players.map((entry) => entry.display_name),
+      previousFactoryCounts: Object.fromEntries(previousFactoryCounts.entries()),
       factoryCount: 0,
       cancelledActionCount: cancelledActionIds.length,
       resetTickLogCount: resetTickLogIds.length,
@@ -1393,7 +1486,8 @@ async function resetDevProofRound(resetInput) {
       display_name: player.display_name,
       previous_tick: previousTick,
       reset_tick: 0,
-      previous_factory_count: previousFactoryCount,
+      reset_player_count: players.length,
+      previous_factory_counts: Object.fromEntries(previousFactoryCounts.entries()),
       reset_factory_count: 0,
       cancelled_action_ids: cancelledActionIds,
       reset_tick_log_ids: resetTickLogIds,
@@ -1409,36 +1503,120 @@ async function resetDevProofRound(resetInput) {
     previousTick,
     cancelledActionCount: cancelledActionIds.length,
     resetTickLogCount: resetTickLogIds.length,
-    previousFactoryCount,
+    resetPlayerCount: players.length,
+    previousFactoryCount: previousFactoryCounts.get(player.id) || 0,
   };
 }
 
 async function loadDevRoundPlayerContext(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: false });
+  return {
+    round: identity.round,
+    player: identity.player,
+    playerRound: identity.playerRound,
+    accessLink: identity.accessLink,
+    resolvedFrom: identity.resolvedFrom,
+  };
+}
+
+async function resolveDevPlayerIdentity(identityInput, options = {}) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
-    query.eq('round_key', actionInput.roundKey)
+    query.eq('round_key', identityInput.roundKey)
   );
 
   if (!round) {
     throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
   }
 
-  const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
-    query.eq('display_name', actionInput.displayName)
-  );
+  let accessLink = null;
+  let player = null;
+  let resolvedFrom = 'display_name';
 
-  if (!player) {
-    throw createServiceError(404, 'player_not_found', `DEV player ${actionInput.displayName} was not found in the shared round.`);
+  if (identityInput.grantId) {
+    accessLink = await fetchSingleRow(
+      'multiplayer_player_access_links',
+      'id, player_id, access_type, invite_token_id, grant_id, token_hash_prefix, provider, status, issued_at, revoked_at, created_at, updated_at, notes',
+      (query) => query.eq('grant_id', identityInput.grantId).eq('status', 'active')
+    );
+
+    if (!accessLink) {
+      throw createServiceError(404, 'grant_not_found', 'No active access link was found for that grant id.');
+    }
+
+    player = await fetchSingleRow(
+      'multiplayer_players',
+      'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+      (query) => query.eq('id', accessLink.player_id)
+    );
+
+    if (!player) {
+      throw createServiceError(404, 'player_not_found', 'The player linked to that access grant was not found.');
+    }
+
+    resolvedFrom = 'invite_grant';
+  } else {
+    const displayName = normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName);
+    const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || null);
+
+    player = await fetchSingleRow(
+      'multiplayer_players',
+      'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+      (query) => query.eq('display_name', displayName).eq('status', 'active')
+    );
+
+    if (player) {
+      resolvedFrom = 'display_name';
+    } else if (testerLabel) {
+      player = await fetchSingleRow(
+        'multiplayer_players',
+        'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+        (query) => query.eq('tester_label', testerLabel).eq('status', 'active')
+      );
+
+      if (player) {
+        resolvedFrom = 'tester_label';
+      }
+    }
+
+    if (!player && options.createIfMissing) {
+      const created = await getOrCreateDevPlayer(round.id, {
+        ...DEV_ROUND_DEFAULTS,
+        displayName,
+        testerLabel: testerLabel || DEV_ROUND_DEFAULTS.testerLabel,
+      });
+      player = created.row;
+      resolvedFrom = 'created';
+    }
+
+    if (!player) {
+      throw createServiceError(404, 'player_not_found', `DEV player ${displayName} was not found in the shared round.`);
+    }
   }
 
-  const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
-    query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
-  );
+  const playerRound = await getOrCreatePlayerRound(round.id, player.id);
+  await getOrCreatePlayerState(round.id, player.id);
+  await getOrCreatePlayerBuildings(round.id, player.id);
+  await getOrCreatePlayerArmies(round.id, player.id);
 
-  if (!playerRound) {
-    throw createServiceError(409, 'player_not_joined', `${actionInput.displayName} is not joined to the shared round.`);
+  const touchedAt = nowIso();
+  await updateSingleRow('multiplayer_players', {
+    last_seen_at: touchedAt,
+    updated_at: touchedAt,
+  }, (query) => query.eq('id', player.id)).catch(() => {});
+
+  if (accessLink) {
+    await updateSingleRow('multiplayer_player_access_links', {
+      updated_at: touchedAt,
+    }, (query) => query.eq('id', accessLink.id)).catch(() => {});
   }
 
-  return { round, player, playerRound };
+  return {
+    round,
+    player,
+    playerRound,
+    accessLink,
+    resolvedFrom,
+  };
 }
 
 async function getOrCreateDevRound(seedInput) {
@@ -1459,7 +1637,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.95 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.96 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -1497,7 +1675,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.95 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.96 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {

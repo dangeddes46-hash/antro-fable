@@ -1,4 +1,4 @@
-# Render deployment - AntrophAI game-service dev seed/read/queued-action/manual-tick/reset proof
+# Render deployment - AntrophAI game-service dev seed/read/queued-action/manual-tick/reset/identity proof
 
 Deploy this folder as a separate Render Web Service.
 
@@ -6,7 +6,7 @@ Deploy this folder as a separate Render Web Service.
 
 - Service type: `Web Service`
 - Repository: `dangeddes46-hash/antrophai_GLWTest`
-- Branch: `dev-multiplayer-proof-polish-v04195`
+- Branch: `dev-multiplayer-token-player-identity-v04196`
 - Root Directory: `game-service`
 - Build Command: `npm install`
 - Start Command: `npm start`
@@ -40,10 +40,18 @@ Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/health
 Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/version
 Invoke-RestMethod https://antrophai-game-service-dev.onrender.com/api/schema-status
 Invoke-RestMethod "https://antrophai-game-service-dev.onrender.com/api/dev/round-summary?roundKey=shared-dev-001"
+Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/identity/resolve-player" -ContentType "application/json" -Body (@{
+  roundKey = "shared-dev-001"
+  grantId = "grant_xxx"
+  testerLabel = "Tester Name"
+  displayName = "Resolved Player Name"
+} | ConvertTo-Json)
 
 Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/actions/queue-build-factory" -ContentType "application/json" -Body (@{
   roundKey = "shared-dev-001"
-  displayName = "DEV Player One"
+  grantId = "grant_xxx"
+  testerLabel = "Tester Name"
+  displayName = "Resolved Player Name"
   amount = 1
 } | ConvertTo-Json)
 
@@ -55,7 +63,9 @@ Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender
 
 Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/reset-proof-round" -ContentType "application/json" -Body (@{
   roundKey = "shared-dev-001"
-  displayName = "DEV Player One"
+  grantId = "grant_xxx"
+  testerLabel = "Tester Name"
+  displayName = "Resolved Player Name"
 } | ConvertTo-Json)
 
 ```
@@ -65,7 +75,9 @@ Optional legacy comparison only:
 ```powershell
 Invoke-RestMethod -Method Post -Uri "https://antrophai-game-service-dev.onrender.com/api/dev/actions/build-factory" -ContentType "application/json" -Body (@{
   roundKey = "shared-dev-001"
-  displayName = "DEV Player One"
+  grantId = "grant_xxx"
+  testerLabel = "Tester Name"
+  displayName = "Resolved Player Name"
   amount = 1
 } | ConvertTo-Json)
 

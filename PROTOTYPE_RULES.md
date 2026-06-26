@@ -1,4 +1,4 @@
-# AntrophAI prototype rules - v0.41.95
+# AntrophAI prototype rules - v0.41.96
 
 ## Round profile
 
@@ -18,7 +18,7 @@ v0.41.92 adds a read-only Shared Multiplayer DEV preview in the launcher. It is 
 
 v0.41.94 adds a dev-only queued action and manual tick proof in the Shared Multiplayer DEV panel. It is temporary scaffolding for testing the browser -> service -> Supabase authority path and must not be treated as final building gameplay.
 
-v0.41.95 adds a dev-only proof reset control in the Shared Multiplayer DEV panel. It is temporary scaffolding for replaying the proof sequence and must not be treated as final building gameplay.
+v0.41.96 adds a dev-only token-to-player identity proof in the Shared Multiplayer DEV panel. It is temporary scaffolding for resolving an already-redeemed invite grant to a multiplayer player and must not be treated as final building gameplay.
 
 Keep these worlds separate:
 

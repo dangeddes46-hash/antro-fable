@@ -15,7 +15,9 @@ v0.41.93 adds the first dev-only server-authorised multiplayer action proof: `PO
 
 v0.41.94 adds the first dev-only queued action and manual tick proof: `POST /api/dev/actions/queue-build-factory` queues the order, and `POST /api/dev/tick/manual-run` applies due queued actions on the server tick.
 
-v0.41.95 adds a proof-reset control: `POST /api/dev/reset-proof-round` clears only the shared DEV proof state for DEV Player One so the queue/manual-tick proof can be replayed safely.
+v0.41.95 adds a proof-reset control: `POST /api/dev/reset-proof-round` clears the shared DEV proof state so the queue/manual-tick proof can be replayed safely.
+
+v0.41.96 adds a token-to-player identity resolver: `POST /api/dev/identity/resolve-player` turns an already-redeemed invite-grant into a multiplayer player identity without sending the raw token back to the game service.
 
 ## v0.41.91 dev proof endpoints
 
@@ -220,9 +222,9 @@ What to log:
 - resulting factory counts
 - tick log id and any validation failure reason
 
-## v0.41.95 dev proof reset endpoint
+## v0.41.96 dev proof reset endpoint
 
-This endpoint exists only to reset the shared DEV proof round for DEV Player One so the queued-action/manual-tick proof can be replayed safely without deleting the history rows.
+This endpoint exists only to reset the shared DEV proof round so the queued-action/manual-tick proof can be replayed safely without deleting the history rows. In v0.41.96 it resets all active proof players in the round, not just one player.
 
 - `POST /api/dev/reset-proof-round`
 
@@ -231,7 +233,9 @@ Request body:
 ```json
 {
   "roundKey": "shared-dev-001",
-  "displayName": "DEV Player One"
+  "grantId": "grant_xxx",
+  "testerLabel": "Tester Name",
+  "displayName": "Resolved Player Name"
 }
 ```
 
@@ -250,6 +254,7 @@ Response shape:
     "factoryCount": 0
   },
   "proofState": {
+    "resetPlayerCount": 2,
     "cancelledActionCount": 1,
     "resetTickLogCount": 1
   },
@@ -265,11 +270,70 @@ Auth/access requirements:
 Validation responsibilities:
 
 - ensure the shared DEV proof round exists
-- ensure the named player exists and is joined to the round
-- reset only the proof round tick counter and DEV Player One factory count
+- resolve the actor player from the invite-grant identity when supplied, otherwise use the named fallback player
+- reset the proof round tick counter and zero the factory count for all active players in the round
 - cancel queued or processing proof action rows safely instead of deleting them
 - mark proof tick-log rows ready for replay without deleting the history rows
 - write a public `dev_proof_reset` round event and an internal audit log row
+
+## v0.41.96 dev identity resolver endpoint
+
+This endpoint exists only to resolve an already-redeemed invite grant into a multiplayer player identity for the proof panel.
+
+- `POST /api/dev/identity/resolve-player`
+
+Request body:
+
+```json
+{
+  "roundKey": "shared-dev-001",
+  "grantId": "grant_xxx",
+  "testerLabel": "Tester Name",
+  "displayName": "Resolved Player Name"
+}
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "identity": {
+    "grantId": "grant_xxx",
+    "resolvedFrom": "invite_grant",
+    "roundKey": "shared-dev-001",
+    "roundName": "Shared Multiplayer DEV",
+    "roundStatus": "draft",
+    "currentTick": 0,
+    "playerId": "player_xxx",
+    "displayName": "Resolved Player Name",
+    "testerLabel": "Tester Name",
+    "playerRoundId": "player_round_xxx"
+  },
+  "round": {
+    "roundKey": "shared-dev-001",
+    "currentTick": 0
+  },
+  "player": {
+    "displayName": "Resolved Player Name"
+  },
+  "message": "Multiplayer identity resolved."
+}
+```
+
+Auth/access requirements:
+
+- temporary DEV-only access
+- `ENABLE_DEV_ENDPOINTS=true`
+
+Validation responsibilities:
+
+- ensure the shared DEV proof round exists
+- require an active grant id
+- resolve the grant to an existing player via `multiplayer_player_access_links`
+- ensure the player is joined to the shared round
+- seed current player snapshot rows if missing
+- write no raw invite token or service secrets back to the browser
 
 What to log:
 
@@ -294,7 +358,7 @@ Response shape:
 {
   "ok": true,
   "service": "antrophai-game-service",
-  "version": "v0.41.95",
+  "version": "v0.41.96",
   "environment": "production",
   "databaseReady": true,
   "tickReady": true
