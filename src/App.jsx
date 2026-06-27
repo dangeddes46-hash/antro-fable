@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.99";
+const PROTOTYPE_VERSION = "v0.41.99a";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1324,7 +1324,7 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
 function multiplayerIdentityFailureMessage(status, errorCode) {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99 this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99a this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
@@ -1338,7 +1338,7 @@ function multiplayerIdentityFailureMessage(status, errorCode) {
 function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99 this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99a this should usually be repaired by resolving identity again.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
@@ -6802,9 +6802,9 @@ export default function App() {
       const hostedRoundName = hostedRound?.roundName || "Shared Multiplayer DEV";
       const hostedCurrentTick = hostedRound?.currentTick ?? hostedRoundSummary?.currentTick ?? "-";
       const hostedLastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
-      const hostedFactoryCount = Number(hostedBuildings?.counts?.factory ?? hostedSummary?.currentPlayerSummary?.factoryCount ?? 0);
-      const hostedQueuedCount = Number(hostedActionSummary?.queued ?? hostedSummary?.currentPlayerSummary?.queuedCount ?? 0);
-      const hostedProcessedCount = Number(hostedActionSummary?.processed ?? hostedSummary?.currentPlayerSummary?.processedCount ?? 0);
+      const hostedFactoryCount = Number(hostedSummary?.factoryCount ?? hostedBuildings?.factories ?? hostedBuildings?.counts?.factory ?? hostedSummary?.currentPlayerSummary?.factoryCount ?? 0);
+      const hostedQueuedCount = Number(hostedSummary?.queuedCount ?? hostedActionSummary?.queued ?? hostedSummary?.currentPlayerSummary?.queuedCount ?? 0);
+      const hostedProcessedCount = Number(hostedSummary?.processedCount ?? hostedActionSummary?.processed ?? hostedSummary?.currentPlayerSummary?.processedCount ?? 0);
       const hostedDueNowCount = Number(hostedActionSummary?.dueNow ?? 0);
       const grantId = identitySummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
       const testerLabel = identitySummary?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "";

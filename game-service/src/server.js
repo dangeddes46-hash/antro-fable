@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.99';
+const SERVICE_VERSION = 'v0.41.99a';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -289,6 +289,9 @@ app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) =>
       playerState: result.playerState,
       buildings: result.buildings,
       armies: result.armies,
+      factoryCount: result.factoryCount,
+      queuedCount: result.queuedCount,
+      processedCount: result.processedCount,
       actionSummary: result.actionSummary,
       recentEvents: result.recentEvents,
       otherPlayers: result.otherPlayers,
@@ -590,7 +593,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.99 game-service skeleton.',
+    message: 'Route not implemented in the v0.41.99a game-service skeleton.',
   });
 });
 
@@ -991,6 +994,9 @@ async function readHostedRoundEntryState(hostedInput) {
   const currentPlayerState = normalizeHostedPlayerState(currentPlayer?.state);
   const currentPlayerBuildings = normalizeHostedBuildingSummary(currentPlayer?.buildings || []);
   const currentPlayerArmies = normalizeHostedArmySummary(currentPlayer?.armies || []);
+  const currentPlayerFactoryCount = Math.max(0, Math.floor(Number(currentPlayerBuildings.counts.factory || 0)));
+  const currentPlayerQueuedCount = Math.max(0, Math.floor(Number(actionSummary.queued + actionSummary.processing || 0)));
+  const currentPlayerProcessedCount = Math.max(0, Math.floor(Number(actionSummary.processed || 0)));
   const currentPlayerSummary = currentPlayer ? compactHostedPlayerSummary(currentPlayer) : {
     id: identity.player.id,
     displayName: identity.player.display_name,
@@ -1000,13 +1006,16 @@ async function readHostedRoundEntryState(hostedInput) {
     raceKey: currentPlayerState.raceKey,
     land: currentPlayerState.land,
     power: currentPlayerState.power,
-    factoryCount: currentPlayerBuildings.counts.factory,
-    queuedCount: actionSummary.queued,
-    processedCount: actionSummary.processed,
+    factoryCount: currentPlayerFactoryCount,
+    queuedCount: currentPlayerQueuedCount,
+    processedCount: currentPlayerProcessedCount,
   };
   if (currentPlayerSummary && !currentPlayerSummary.playerRoundId) {
-    currentPlayerSummary.playerRoundId = identity.playerRound?.id || currentPlayer.playerRoundId || currentPlayer.player_round_id || null;
+    currentPlayerSummary.playerRoundId = identity.playerRound?.id || currentPlayer?.playerRoundId || currentPlayer?.player_round_id || null;
   }
+  currentPlayerSummary.factoryCount = currentPlayerFactoryCount;
+  currentPlayerSummary.queuedCount = currentPlayerQueuedCount;
+  currentPlayerSummary.processedCount = currentPlayerProcessedCount;
 
   return {
     grantId: identity.grantId || hostedInput.grantId,
@@ -1017,6 +1026,9 @@ async function readHostedRoundEntryState(hostedInput) {
     playerState: currentPlayerState,
     buildings: currentPlayerBuildings,
     armies: currentPlayerArmies,
+    factoryCount: currentPlayerFactoryCount,
+    queuedCount: currentPlayerQueuedCount,
+    processedCount: currentPlayerProcessedCount,
     actionSummary: {
       total: actionSummary.total,
       queued: actionSummary.queued + actionSummary.processing,
@@ -1963,7 +1975,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.99 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.99a invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -2043,7 +2055,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.99 dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.99a dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2081,7 +2093,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.99 dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.99a dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2417,11 +2429,19 @@ function normalizeHostedBuildingSummary(rows = []) {
   const summaryForKey = (key) => {
     const row = (grouped.get(key) || [null])[0];
     const count = Math.max(0, Math.floor(Number(row?.count ?? 0)));
-    const effectiveCount = Math.max(0, Math.floor(Number(row?.effective_count ?? row?.count ?? 0)));
+    const effectiveCount = Math.max(0, Math.floor(Number(row?.effective_count ?? row?.effectiveCount ?? row?.count ?? 0)));
     return {
       count,
       effectiveCount,
     };
+  };
+
+  const counts = {
+    livingArea: summaryForKey('living_area').count,
+    factory: summaryForKey('factory').effectiveCount,
+    barracks: summaryForKey('barracks').count,
+    bank: summaryForKey('bank').count,
+    scienceLabs: summaryForKey('science_labs').count,
   };
 
   return {
@@ -2433,13 +2453,15 @@ function normalizeHostedBuildingSummary(rows = []) {
       bank: summaryForKey('bank'),
       science_labs: summaryForKey('science_labs'),
     },
-    counts: {
-      livingArea: summaryForKey('living_area').count,
-      factory: summaryForKey('factory').count,
-      barracks: summaryForKey('barracks').count,
-      bank: summaryForKey('bank').count,
-      scienceLabs: summaryForKey('science_labs').count,
-    },
+    counts,
+    livingArea: counts.livingArea,
+    factory: counts.factory,
+    factories: counts.factory,
+    barracks: counts.barracks,
+    bank: counts.bank,
+    banks: counts.bank,
+    scienceLabs: counts.scienceLabs,
+    science_labs: counts.scienceLabs,
   };
 }
 
@@ -2469,6 +2491,10 @@ function normalizeHostedArmySummary(rows = []) {
       training: summaryForKey('infantry').trainingCount + summaryForKey('defense').trainingCount,
       returning: summaryForKey('infantry').returningCount + summaryForKey('defense').returningCount,
     },
+    infantry: summaryForKey('infantry').count,
+    defense: summaryForKey('defense').count,
+    training: summaryForKey('infantry').trainingCount + summaryForKey('defense').trainingCount,
+    returning: summaryForKey('infantry').returningCount + summaryForKey('defense').returningCount,
   };
 }
 
@@ -2542,8 +2568,9 @@ function formatTickLog(row) {
 }
 
 function groupRowsByKey(rows, keyName) {
+  const camelKeyName = keyName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
   return rows.reduce((map, row) => {
-    const key = row[keyName];
+    const key = row[keyName] ?? row[camelKeyName];
     const bucket = map.get(key) || [];
     bucket.push(row);
     map.set(key, bucket);
