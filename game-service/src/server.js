@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.99a';
+const SERVICE_VERSION = 'v0.41.99b';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -593,7 +593,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.99a game-service skeleton.',
+    message: 'Route not implemented in the v0.41.99b game-service skeleton.',
   });
 });
 
@@ -923,16 +923,7 @@ async function readDevRoundSummary(roundKey) {
       state: formatState(stateByPlayerId.get(player.id)),
       buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
       armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
-      factoryCount: Math.max(
-        0,
-        Math.floor(
-          Number(
-            (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.effective_count ??
-            (buildingsByPlayerId.get(player.id) || []).find((row) => row.building_key === 'factory')?.count ??
-            0
-          )
-        )
-      ),
+      factoryCount: canonicalCountFromRows((buildingsByPlayerId.get(player.id) || []).filter((row) => row.building_key === 'factory')),
     }))
     .sort((left, right) => {
       const leftTick = left.state?.tick ?? 0;
@@ -1152,12 +1143,12 @@ async function buildDevFactoryAction(actionInput) {
     }
   }
 
-  const buildingRow = await fetchSingleRow(
+  const buildingRows = await fetchRows(
     'multiplayer_player_buildings',
     'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
     (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
   );
-  const oldCount = Math.max(0, Math.floor(Number(buildingRow?.count ?? 0)));
+  const oldCount = canonicalCountFromRows(buildingRows);
   const amount = actionInput.amount;
   const newCount = oldCount + amount;
   const processedAt = nowIso();
@@ -1456,12 +1447,12 @@ async function runManualDevTick(tickInput) {
         updated_at: actionNow,
       }, (query) => query.eq('id', action.id));
 
-      const buildingRow = await fetchSingleRow(
+      const buildingRows = await fetchRows(
         'multiplayer_player_buildings',
         'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
         (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
       );
-      const oldCount = Math.max(0, Math.floor(Number(buildingRow?.count ?? 0)));
+      const oldCount = canonicalCountFromRows(buildingRows);
       const newCount = oldCount + actionAmount;
       const processedAt = nowIso();
       const actionResult = {
@@ -1975,7 +1966,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.99a invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.41.99b invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -2055,7 +2046,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.99a dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.41.99b dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2093,7 +2084,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.99a dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.41.99b dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2172,21 +2163,22 @@ async function getOrCreatePlayerBuildings(roundId, playerId) {
     query.eq('round_id', roundId).eq('player_id', playerId)
   );
   const existingKeys = new Set(existing.map((row) => row.building_key));
-  const created = expectedRows.some((row) => !existingKeys.has(row.building_key));
+  const missingRows = expectedRows.filter((row) => !existingKeys.has(row.building_key));
 
   await Promise.all(
-    expectedRows.map((row) =>
-      upsertRow('multiplayer_player_buildings', {
+    missingRows.map((row) =>
+      insertSingleRow('multiplayer_player_buildings', {
         round_id: roundId,
         player_id: playerId,
         building_key: row.building_key,
         count: row.count,
-      }, 'player_id,round_id,building_key')
+        effective_count: row.count,
+      })
     )
   );
 
   return {
-    created,
+    created: missingRows.length > 0,
   };
 }
 
@@ -2427,9 +2419,8 @@ function normalizeHostedPlayerState(state) {
 function normalizeHostedBuildingSummary(rows = []) {
   const grouped = groupRowsByKey(rows, 'building_key');
   const summaryForKey = (key) => {
-    const row = (grouped.get(key) || [null])[0];
-    const count = Math.max(0, Math.floor(Number(row?.count ?? 0)));
-    const effectiveCount = Math.max(0, Math.floor(Number(row?.effective_count ?? row?.effectiveCount ?? row?.count ?? 0)));
+    const count = canonicalCountFromRows(grouped.get(key) || []);
+    const effectiveCount = count;
     return {
       count,
       effectiveCount,
@@ -2552,6 +2543,13 @@ function formatActionQueue(action) {
       tick: Number(result.tick ?? action.execute_after_tick ?? action.requested_tick ?? 0),
     } : null,
   };
+}
+
+function canonicalCountFromRows(rows = []) {
+  return rows.reduce((max, row) => {
+    const value = Math.max(0, Math.floor(Number(row?.effective_count ?? row?.effectiveCount ?? row?.count ?? 0)));
+    return value > max ? value : max;
+  }, 0);
 }
 
 function formatTickLog(row) {

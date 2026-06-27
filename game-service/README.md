@@ -1,4 +1,4 @@
-# AntrophAI v0.41.99a game-service dev seed/read/queued-action/manual-tick/reset/identity/hosted-round proof
+# AntrophAI v0.41.99b game-service dev seed/read/queued-action/manual-tick/reset/identity/hosted-round proof
 
 This folder contains the first standalone multiplayer game-service proof for AntrophAI.
 
