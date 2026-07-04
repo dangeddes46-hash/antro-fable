@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.41.99b';
+const SERVICE_VERSION = 'v0.43.1';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -215,6 +215,7 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
       roundKey: result.round.round_key,
       grantId: result.grantId || identityInput.grantId,
       accessLinkCreated: Boolean(result.accessLinkCreated),
+      currentPlayerId: result.player.id,
       requestedDisplayNameIgnored: Boolean(result.requestedDisplayNameIgnored),
       requestedTesterLabelIgnored: Boolean(result.requestedTesterLabelIgnored),
       identity: {
@@ -224,6 +225,7 @@ app.post('/api/dev/identity/resolve-player', requireDevEndpoints, async (req, re
         roundName: result.round.round_name,
         roundStatus: result.round.status,
         currentTick: Number(result.round.current_tick || 0),
+        currentPlayerId: result.player.id,
         playerId: result.player.id,
         displayName: result.player.display_name,
         testerLabel: result.player.tester_label,
@@ -284,6 +286,7 @@ app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) =>
       accessLinkCreated: Boolean(result.accessLinkCreated),
       resolvedFrom: result.resolvedFrom,
       grantId: result.grantId,
+      currentPlayerId: result.currentPlayerId || result.player?.id || null,
       round: result.round,
       player: result.player,
       playerState: result.playerState,
@@ -593,7 +596,7 @@ app.use((req, res) => {
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
     error: 'not_found',
-    message: 'Route not implemented in the v0.41.99b game-service skeleton.',
+    message: 'Route not implemented in the v0.43.1 game-service skeleton.',
   });
 });
 
@@ -854,6 +857,13 @@ async function readDevRoundSummary(roundKey) {
         query.in('id', playerIds)
       )
     : [];
+  const activeAccessLinks = playerIds.length > 0
+    ? await fetchRows(
+        'multiplayer_player_access_links',
+        'id, player_id, access_type, invite_token_id, grant_id, token_hash_prefix, provider, status, issued_at, revoked_at, created_at, updated_at, notes',
+        (query) => query.in('player_id', playerIds).eq('status', 'active').order('created_at', { ascending: true }).order('id', { ascending: true })
+      )
+    : [];
   const states = playerIds.length > 0
     ? await fetchRows(
         'multiplayer_player_state',
@@ -905,13 +915,21 @@ async function readDevRoundSummary(roundKey) {
   const stateByPlayerId = new Map(states.map((state) => [state.player_id, state]));
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
+  const accessLinkByPlayerId = new Map(activeAccessLinks.map((link) => [link.player_id, link]));
   const actionsByPlayerId = groupRowsByKey(visibleActionRows, 'player_id');
-  const actionSummary = summarizeActionQueueRows(visibleActionRows, round.current_tick);
+  const canonicalActionRows = accessLinkByPlayerId.size > 0
+    ? visibleActionRows.filter((row) => accessLinkByPlayerId.has(row.player_id))
+    : visibleActionRows;
+  const actionSummary = summarizeActionQueueRows(canonicalActionRows, round.current_tick);
   const formattedPlayers = players
     .map((player) => ({
       id: player.id,
       displayName: player.display_name,
       testerLabel: player.tester_label,
+      grantId: accessLinkByPlayerId.get(player.id)?.grant_id || player.created_from_grant_id || null,
+      accessLinkId: accessLinkByPlayerId.get(player.id)?.id || null,
+      isGrantLinked: Boolean(accessLinkByPlayerId.get(player.id)),
+      identityScope: accessLinkByPlayerId.get(player.id) ? 'canonical' : player.created_from_grant_id ? 'legacy' : 'diagnostic',
       queuedCount: (() => {
         const playerActionSummary = summarizeActionQueueRows(actionsByPlayerId.get(player.id) || [], round.current_tick);
         return playerActionSummary.queued + playerActionSummary.processing;
@@ -926,6 +944,12 @@ async function readDevRoundSummary(roundKey) {
       factoryCount: canonicalCountFromRows((buildingsByPlayerId.get(player.id) || []).filter((row) => row.building_key === 'factory')),
     }))
     .sort((left, right) => {
+      const leftCanonical = left.isGrantLinked ? 0 : 1;
+      const rightCanonical = right.isGrantLinked ? 0 : 1;
+      if (leftCanonical !== rightCanonical) {
+        return leftCanonical - rightCanonical;
+      }
+
       const leftTick = left.state?.tick ?? 0;
       const rightTick = right.state?.tick ?? 0;
       if (rightTick !== leftTick) {
@@ -934,7 +958,8 @@ async function readDevRoundSummary(roundKey) {
 
       return left.displayName.localeCompare(right.displayName);
     });
-  const totalFactoryCount = formattedPlayers.reduce((sum, player) => sum + Number(player.factoryCount || 0), 0);
+  const canonicalPlayers = formattedPlayers.filter((player) => player.isGrantLinked);
+  const totalFactoryCount = (canonicalPlayers.length > 0 ? canonicalPlayers : formattedPlayers).reduce((sum, player) => sum + Number(player.factoryCount || 0), 0);
   const recentPublicEventTitles = recentEvents.slice(0, 3).map((event) => event.title || event.event_type || 'Event');
 
   return {
@@ -955,6 +980,8 @@ async function readDevRoundSummary(roundKey) {
       roundStatus: round.status,
       currentTick: Number(round.current_tick || 0),
       playerCount: formattedPlayers.length,
+      canonicalPlayerCount: canonicalPlayers.length,
+      legacyPlayerCount: Math.max(0, formattedPlayers.length - canonicalPlayers.length),
       factoryCount: totalFactoryCount,
       queuedCount: actionSummary.queued,
       processedCount: actionSummary.processed,
@@ -993,6 +1020,10 @@ async function readHostedRoundEntryState(hostedInput) {
     displayName: identity.player.display_name,
     testerLabel: identity.player.tester_label,
     playerRoundId: identity.playerRound?.id || null,
+    grantId: identity.grantId || null,
+    accessLinkId: identity.accessLink?.id || null,
+    identityScope: 'canonical',
+    isGrantLinked: true,
     currentTick: Number(identity.round.current_tick || 0),
     raceKey: currentPlayerState.raceKey,
     land: currentPlayerState.land,
@@ -1010,6 +1041,7 @@ async function readHostedRoundEntryState(hostedInput) {
 
   return {
     grantId: identity.grantId || hostedInput.grantId,
+    currentPlayerId: identity.currentPlayerId || identity.player.id,
     resolvedFrom: identity.resolvedFrom,
     accessLinkCreated: Boolean(identity.accessLinkCreated),
     round: formatRound(identity.round),
@@ -1040,6 +1072,7 @@ async function readHostedRoundEntryState(hostedInput) {
     canonicalState: {
       round: formatRound(identity.round),
       player: formatPlayer(identity.player),
+      currentPlayerId: identity.currentPlayerId || identity.player.id,
       playerState: currentPlayerState,
       buildings: currentPlayerBuildings,
       armies: currentPlayerArmies,
@@ -1748,7 +1781,141 @@ async function loadDevRoundPlayerContext(actionInput) {
   };
 }
 
+async function resolvePlayerFromGrant(grantId, roundKey, identityInput = {}) {
+  const normalizedGrantId = normalizeText(grantId || '');
+  const normalizedRoundKey = normalizeText(roundKey || DEV_ROUND_DEFAULTS.roundKey);
+
+  if (!normalizedGrantId) {
+    throw createServiceError(400, 'identity_not_provided', 'Provide an active grantId to resolve a multiplayer identity.');
+  }
+
+  if (!normalizedRoundKey) {
+    throw createServiceError(400, 'round_not_provided', 'Provide a roundKey to resolve a multiplayer identity.');
+  }
+
+  const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
+    query.eq('round_key', normalizedRoundKey)
+  );
+
+  if (!round) {
+    throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
+  }
+
+  const playerColumns = 'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes';
+  const accessLinkColumns = 'id, player_id, access_type, invite_token_id, grant_id, token_hash_prefix, provider, status, issued_at, revoked_at, created_at, updated_at, notes';
+  let accessLink = await fetchSingleRow(
+    'multiplayer_player_access_links',
+    accessLinkColumns,
+    (query) => query.eq('grant_id', normalizedGrantId).eq('status', 'active').order('created_at', { ascending: true }).order('id', { ascending: true })
+  );
+  let accessLinkCreated = false;
+  let player = null;
+  let resolvedFrom = 'access_link';
+
+  if (accessLink) {
+    player = await fetchSingleRow(
+      'multiplayer_players',
+      playerColumns,
+      (query) => query.eq('id', accessLink.player_id)
+    );
+
+    if (!player) {
+      const grantLookup = await fetchInviteGrantByGrantId(normalizedGrantId);
+      const inviteGrant = grantLookup.row;
+      const labels = inviteGrant
+        ? resolveInviteGrantLabels(inviteGrant, identityInput)
+        : {
+            displayName: normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName),
+            testerLabel: normalizeDevTesterLabel(identityInput.testerLabel || identityInput.displayName || null),
+          };
+      const playerResult = await getOrCreateInviteGrantPlayer(round.id, {
+        grantId: normalizedGrantId,
+        roundKey: normalizedRoundKey,
+        displayName: labels.displayName,
+        testerLabel: labels.testerLabel,
+      });
+      player = playerResult.row;
+      resolvedFrom = playerResult.created ? 'invite_grant_created' : 'invite_grant';
+      const touchedAt = nowIso();
+      await updateSingleRow('multiplayer_player_access_links', {
+        player_id: player.id,
+        updated_at: touchedAt,
+      }, (query) => query.eq('id', accessLink.id)).catch(() => {});
+    }
+  }
+
+  if (!player) {
+    const inviteGrantLookup = await fetchInviteGrantByGrantId(normalizedGrantId);
+    const inviteGrant = inviteGrantLookup.row;
+
+    if (!inviteGrant) {
+      throw createServiceError(404, 'invite_grant_not_found', 'No invite grant was found for that grant id.');
+    }
+
+    if (!isInviteGrantActive(inviteGrant)) {
+      throw createServiceError(404, 'invite_grant_not_active', 'The invite grant is not active.');
+    }
+
+    const inviteLabels = resolveInviteGrantLabels(inviteGrant, identityInput);
+    const playerResult = await getOrCreateInviteGrantPlayer(round.id, {
+      grantId: normalizedGrantId,
+      roundKey: normalizedRoundKey,
+      displayName: inviteLabels.displayName,
+      testerLabel: inviteLabels.testerLabel,
+    });
+    player = playerResult.row;
+    resolvedFrom = playerResult.created ? 'invite_grant_created' : 'invite_grant';
+
+    const accessLinkResult = await getOrCreateInviteGrantAccessLink(round.id, player.id, normalizedGrantId, inviteGrant);
+    accessLink = accessLinkResult.row;
+    accessLinkCreated = accessLinkResult.created;
+  }
+
+  if (!player) {
+    throw createServiceError(404, 'player_not_found', 'The player linked to that access grant was not found.');
+  }
+
+  const impersonationFlags = resolveIdentityOverrideFlags(identityInput, player);
+  const playerRound = await getOrCreatePlayerRound(round.id, player.id);
+  await getOrCreatePlayerState(round.id, player.id);
+  await getOrCreatePlayerBuildings(round.id, player.id);
+  await getOrCreatePlayerArmies(round.id, player.id);
+
+  const touchedAt = nowIso();
+  await updateSingleRow('multiplayer_players', {
+    last_seen_at: touchedAt,
+    updated_at: touchedAt,
+  }, (query) => query.eq('id', player.id)).catch(() => {});
+
+  if (accessLink) {
+    await updateSingleRow('multiplayer_player_access_links', {
+      updated_at: touchedAt,
+    }, (query) => query.eq('id', accessLink.id)).catch(() => {});
+  }
+
+  return {
+    round,
+    player,
+    playerRound,
+    accessLink,
+    accessLinkCreated,
+    resolvedFrom,
+    grantId: normalizedGrantId,
+    currentPlayerId: player.id,
+    requestedDisplayNameIgnored: impersonationFlags.requestedDisplayNameIgnored,
+    requestedTesterLabelIgnored: impersonationFlags.requestedTesterLabelIgnored,
+  };
+}
+
 async function resolveDevPlayerIdentity(identityInput, options = {}) {
+  const grantId = normalizeText(identityInput.grantId || '');
+  if (options.requireGrant && !grantId) {
+    throw createServiceError(400, 'identity_not_provided', 'Provide an active grantId to resolve a multiplayer identity.');
+  }
+  if (grantId) {
+    return resolvePlayerFromGrant(grantId, identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey, identityInput);
+  }
+
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', identityInput.roundKey)
   );
@@ -1757,92 +1924,45 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
     throw createServiceError(404, 'round_not_found', 'Shared Multiplayer DEV round has not been seeded yet.');
   }
 
+  const displayName = normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName);
+  const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || null);
   let accessLink = null;
   let accessLinkCreated = false;
   let player = null;
   let resolvedFrom = 'display_name';
 
-  if (identityInput.grantId) {
-    accessLink = await fetchSingleRow(
-      'multiplayer_player_access_links',
-      'id, player_id, access_type, invite_token_id, grant_id, token_hash_prefix, provider, status, issued_at, revoked_at, created_at, updated_at, notes',
-      (query) => query.eq('grant_id', identityInput.grantId).eq('status', 'active')
-    );
+  player = await fetchSingleRow(
+    'multiplayer_players',
+    'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
+    (query) => query.eq('display_name', displayName).eq('status', 'active')
+  );
 
-    if (accessLink) {
-      player = await fetchSingleRow(
-        'multiplayer_players',
-        'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
-        (query) => query.eq('id', accessLink.player_id)
-      );
-
-      if (!player) {
-        throw createServiceError(404, 'player_not_found', 'The player linked to that access grant was not found.');
-      }
-
-      resolvedFrom = 'access_link';
-    } else {
-      const inviteGrantLookup = await fetchInviteGrantByGrantId(identityInput.grantId);
-      const inviteGrant = inviteGrantLookup.row;
-
-      if (!inviteGrant) {
-        throw createServiceError(404, 'invite_grant_not_found', 'No invite grant was found for that grant id.');
-      }
-
-      if (!isInviteGrantActive(inviteGrant)) {
-        throw createServiceError(404, 'invite_grant_not_active', 'The invite grant is not active.');
-      }
-
-      const inviteLabels = resolveInviteGrantLabels(inviteGrant, identityInput);
-      const playerResult = await getOrCreateInviteGrantPlayer(round.id, {
-        grantId: identityInput.grantId,
-        displayName: inviteLabels.displayName,
-        testerLabel: inviteLabels.testerLabel,
-      });
-      player = playerResult.row;
-      resolvedFrom = playerResult.created ? 'invite_grant_created' : 'invite_grant';
-
-      const accessLinkResult = await getOrCreateInviteGrantAccessLink(round.id, player.id, identityInput.grantId, inviteGrant);
-      accessLink = accessLinkResult.row;
-      accessLinkCreated = accessLinkResult.created;
-    }
-  } else {
-    const displayName = normalizeDevDisplayName(identityInput.displayName || identityInput.testerLabel || DEV_ROUND_DEFAULTS.displayName);
-    const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || null);
-
+  if (player) {
+    resolvedFrom = 'display_name';
+  } else if (testerLabel) {
     player = await fetchSingleRow(
       'multiplayer_players',
       'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
-      (query) => query.eq('display_name', displayName).eq('status', 'active')
+      (query) => query.eq('tester_label', testerLabel).eq('status', 'active')
     );
 
     if (player) {
-      resolvedFrom = 'display_name';
-    } else if (testerLabel) {
-      player = await fetchSingleRow(
-        'multiplayer_players',
-        'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes',
-        (query) => query.eq('tester_label', testerLabel).eq('status', 'active')
-      );
-
-      if (player) {
-        resolvedFrom = 'tester_label';
-      }
+      resolvedFrom = 'tester_label';
     }
+  }
 
-    if (!player && options.createIfMissing) {
-      const created = await getOrCreateDevPlayer(round.id, {
-        ...DEV_ROUND_DEFAULTS,
-        displayName,
-        testerLabel: testerLabel || DEV_ROUND_DEFAULTS.testerLabel,
-      });
-      player = created.row;
-      resolvedFrom = 'created';
-    }
+  if (!player && options.createIfMissing) {
+    const created = await getOrCreateDevPlayer(round.id, {
+      ...DEV_ROUND_DEFAULTS,
+      displayName,
+      testerLabel: testerLabel || DEV_ROUND_DEFAULTS.testerLabel,
+    });
+    player = created.row;
+    resolvedFrom = 'created';
+  }
 
-    if (!player) {
-      throw createServiceError(404, 'player_not_found', `DEV player ${displayName} was not found in the shared round.`);
-    }
+  if (!player) {
+    throw createServiceError(404, 'player_not_found', `DEV player ${displayName} was not found in the shared round.`);
   }
 
   const impersonationFlags = resolveIdentityOverrideFlags(identityInput, player);
@@ -1871,6 +1991,7 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
     accessLinkCreated,
     resolvedFrom,
     grantId: identityInput.grantId || accessLink?.grant_id || null,
+    currentPlayerId: player.id,
     requestedDisplayNameIgnored: impersonationFlags.requestedDisplayNameIgnored,
     requestedTesterLabelIgnored: impersonationFlags.requestedTesterLabelIgnored,
   };
@@ -1948,15 +2069,15 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
   const testerLabel = normalizeDevTesterLabel(identityInput.testerLabel || identityInput.displayName || null);
   const playerColumns = 'id, display_name, tester_label, status, created_from_invite_token_id, created_from_grant_id, created_at, updated_at, last_seen_at, notes';
 
-  const byGrantId = await fetchSingleRow(
+  const byGrantId = await fetchRows(
     'multiplayer_players',
     playerColumns,
-    (query) => query.eq('created_from_grant_id', grantId)
+    (query) => query.eq('created_from_grant_id', grantId).order('created_at', { ascending: true }).order('id', { ascending: true })
   );
 
-  if (byGrantId) {
+  if (byGrantId.length > 0) {
     return {
-      row: byGrantId,
+      row: byGrantId[0],
       created: false,
     };
   }
@@ -1966,7 +2087,7 @@ async function getOrCreateInviteGrantPlayer(roundId, identityInput) {
     tester_label: testerLabel,
     status: 'active',
     created_from_grant_id: grantId,
-    notes: `v0.41.99b invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
+    notes: `v0.43.1 invite grant player for ${identityInput.roundKey || DEV_ROUND_DEFAULTS.roundKey}`,
   });
 
   return {
@@ -2046,7 +2167,7 @@ async function getOrCreateDevRound(seedInput) {
     status: 'draft',
     game_speed: 1,
     current_tick: 0,
-    notes: `v0.41.99b dev seed round for ${seedInput.roundKey}`,
+    notes: `v0.43.1 dev seed round for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2084,7 +2205,7 @@ async function getOrCreateDevPlayer(roundId, seedInput) {
     tester_label: seedInput.testerLabel,
     status: 'active',
     created_from_grant_id: devSeedMarker,
-    notes: `v0.41.99b dev seed player for ${seedInput.roundKey}`,
+    notes: `v0.43.1 dev seed player for ${seedInput.roundKey}`,
   });
 
   return {
@@ -2495,6 +2616,10 @@ function compactHostedPlayerSummary(player = {}) {
     displayName: player.displayName || player.display_name || 'Unknown player',
     testerLabel: player.testerLabel || player.tester_label || null,
     playerRoundId: player.playerRoundId || player.player_round_id || null,
+    grantId: player.grantId || player.grant_id || player.createdFromGrantId || player.created_from_grant_id || null,
+    accessLinkId: player.accessLinkId || player.access_link_id || null,
+    identityScope: player.identityScope || null,
+    isGrantLinked: Boolean(player.isGrantLinked),
     currentTick: Number(player.state?.tick ?? player.currentTick ?? 0),
     raceKey: player.state?.raceKey || player.state?.race_key || 'unknown',
     land: Number(player.state?.land ?? 0),

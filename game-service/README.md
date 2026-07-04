@@ -1,6 +1,6 @@
-# AntrophAI v0.41.99b game-service dev seed/read/queued-action/manual-tick/reset/identity/hosted-round proof
+# AntrophAI v0.43.1 game-service dev seed/read/queued-action/manual-tick/reset/identity/hosted-round proof
 
-This folder contains the first standalone multiplayer game-service proof for AntrophAI.
+This folder contains the first standalone multiplayer game-service proof for AntrophAI. v0.43.1 locks hosted identity to a single canonical grant-linked player per round.
 
 It is separate from the invite-token service and separate from the browser client.
 

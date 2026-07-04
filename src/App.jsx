@@ -19,7 +19,7 @@ import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineTex
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
-const PROTOTYPE_VERSION = "v0.41.99b";
+const PROTOTYPE_VERSION = "v0.43.1";
 const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
 const INVITE_TOKEN_SERVICE_HOST = (() => {
   try {
@@ -1324,7 +1324,7 @@ function multiplayerPreviewFailureMessage(status, errorCode) {
 function multiplayerIdentityFailureMessage(status, errorCode) {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99b this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. Resolve identity again after redeeming a fresh invite token.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
@@ -1338,7 +1338,7 @@ function multiplayerIdentityFailureMessage(status, errorCode) {
 function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
   if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
   if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. In v0.41.99b this should usually be repaired by resolving identity again.";
+  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. Resolve identity again after redeeming a fresh invite token.";
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
@@ -1679,6 +1679,8 @@ export default function App() {
   const [multiplayerIdentityState, setMultiplayerIdentityState] = useState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   const [multiplayerDevActionState, setMultiplayerDevActionState] = useState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
   const [hostedRoundState, setHostedRoundState] = useState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
+  const [activeGameMode, setActiveGameMode] = useState("local");
+  const [hostedDiagnosticsOpen, setHostedDiagnosticsOpen] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2518,7 +2520,7 @@ export default function App() {
     if (hostedRoundState.loading) return;
     if (!testerAccessRecord?.accepted) {
       setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
-      return;
+      return null;
     }
 
     const accessGrant = testerAccessRecord?.accessGrant || null;
@@ -2532,12 +2534,12 @@ export default function App() {
         fetchedAt: Date.now(),
         summary: null,
       });
-      return;
+      return null;
     }
 
     if (!GAME_SERVICE_URL) {
       setHostedRoundState({ loading: false, error: hostedGameServiceFailureMessage(), message: "", fetchedAt: Date.now(), summary: null });
-      return;
+      return null;
     }
 
     setHostedRoundState((prev) => ({ ...prev, loading: true, error: "", message: "" }));
@@ -2566,7 +2568,7 @@ export default function App() {
           const errorCode = result?.error || null;
           const errorMessage = hostedRoundFailureMessage(response.status, errorCode);
           setHostedRoundState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
-          return;
+          return null;
         }
 
         const summary = {
@@ -2584,6 +2586,7 @@ export default function App() {
           accessLinkCreated: Boolean(result?.accessLinkCreated),
           resolvedFrom: result?.resolvedFrom || null,
           grantId: result?.grantId || grantId,
+          currentPlayerId: result?.currentPlayerId || result?.player?.id || null,
           currentPlayerSummary: result?.currentPlayerSummary || null,
         };
         setHostedRoundState({
@@ -2593,11 +2596,14 @@ export default function App() {
           fetchedAt,
           summary,
         });
+        setActiveGameMode("hosted");
+        return summary;
       } finally {
         if (timeoutId) window.clearTimeout(timeoutId);
       }
     } catch (error) {
       setHostedRoundState({ loading: false, error: hostedRoundFailureMessage(503, "service_unavailable"), message: "", fetchedAt, summary: null });
+      return null;
     }
   }
   async function refreshMultiplayerIdentity({ forceResolve = false } = {}) {
@@ -2682,6 +2688,7 @@ export default function App() {
           roundName: identity.roundName || "Shared Multiplayer DEV",
           roundStatus: identity.roundStatus || null,
           currentTick: Number(identity.currentTick ?? 0),
+          currentPlayerId: identity.currentPlayerId || identity.playerId || null,
           playerId: identity.playerId || null,
           playerRoundId: identity.playerRoundId || null,
           displayName: identity.displayName || displayName,
@@ -2821,7 +2828,7 @@ export default function App() {
       return;
     }
 
-    if (!multiplayerIdentityState.summary?.playerId) {
+    if (!multiplayerIdentityState.summary?.currentPlayerId && !multiplayerIdentityState.summary?.playerId) {
       const message = "Resolve your multiplayer identity first.";
       setMultiplayerDevActionState({
         loading: false,
@@ -2877,7 +2884,13 @@ export default function App() {
     refreshMultiplayerPreview();
   }
   async function enterHostedDevRound() {
-    return refreshHostedDevRound({ forceEnter: true });
+    const summary = await refreshHostedDevRound({ forceEnter: true });
+    if (summary) {
+      setActiveGameMode("hosted");
+      setHostedDiagnosticsOpen(false);
+      setPage("status");
+    }
+    return summary;
   }
   async function submitHostedDevQueueBuildFactory() {
     return submitMultiplayerDevAction({
@@ -4688,7 +4701,7 @@ export default function App() {
         multiplayerIdentityDisplayName: multiplayerIdentityState.summary?.displayName || null,
         multiplayerIdentityTesterLabel: multiplayerIdentityState.summary?.testerLabel || null,
         multiplayerIdentityGrantId: multiplayerIdentityState.summary?.grantId || null,
-        multiplayerIdentityPlayerId: multiplayerIdentityState.summary?.playerId || null,
+        multiplayerIdentityPlayerId: multiplayerIdentityState.summary?.currentPlayerId || multiplayerIdentityState.summary?.playerId || null,
         multiplayerIdentityResolvedFrom: multiplayerIdentityState.summary?.resolvedFrom || null,
         multiplayerIdentityRoundKey: multiplayerIdentityState.summary?.roundKey || null,
         multiplayerIdentityRoundName: multiplayerIdentityState.summary?.roundName || null,
@@ -4997,6 +5010,7 @@ export default function App() {
 
   function renderRoundSetup() { return <Panel title="Game Admin"><p className="mb-3 text-orange-200">Admin-facing controls for round creation, round profiles and custom settings.</p><OldTable rows={[["Game Name", gameName], ["Selected Profile", roundProfile], ["Game Speed", `${roundSettings.gameSpeed}x`], ["Starting Land", fmt(roundSettings.startingLand)], ["Starting Cardisium", fmt(roundSettings.startingCards)], ["Revive Mode", roundSettings.revives], ["Protection Base", `${roundSettings.protectionBaseHours} hours`], ["Explore", roundSettings.exploreEnabled === false ? "Disabled" : "Enabled"]]} /><Panel title="Preset Profiles"><div className="flex gap-2 flex-wrap">{Object.keys(roundProfiles).map((p) => <button key={p} className="classic-btn antro-action-btn" onClick={() => applyRoundProfile(p)}>{p}</button>)}</div></Panel><Panel title="Custom Parameters"><div className="mb-3"><label className="block text-orange-300 mb-1">Game Name</label><input className="w-full bg-black border border-orange-900 text-orange-100 px-2 py-1" value={gameName} maxLength={TEXT_LIMITS.gameName} onChange={(e) => setGameName(cleanSingleLineText(e.target.value, TEXT_LIMITS.gameName))} /></div><table className="w-full text-sm"><tbody>{[["gameSpeed", "Game Speed"], ["startingLand", "Starting Land"], ["startingCards", "Starting Cardisium"], ["protectionBaseHours", "Protection Base Hours"]].map(([key, label]) => <tr key={key} className="border-b border-orange-950"><td className="p-1 text-orange-300">{label}</td><td className="p-1 text-right"><TextInput value={roundSettings[key]} onChange={(v) => setRoundSettings((s) => ({ ...s, [key]: v }))} /></td></tr>)}<tr className="border-b border-orange-950"><td className="p-1 text-orange-300">Revives</td><td className="p-1 text-right"><select className="bg-black border border-orange-900 text-orange-100 px-2 py-1" value={roundSettings.revives} onChange={(e) => setRoundSettings((s) => ({ ...s, revives: e.target.value }))}><option>No revives</option><option>10% revives</option><option>Full revive system</option></select></td></tr><tr className="border-b border-orange-950"><td className="p-1 text-orange-300">Explore</td><td className="p-1 text-right"><select className="bg-black border border-orange-900 text-orange-100 px-2 py-1" value={roundSettings.exploreEnabled === false ? "Disabled" : "Enabled"} onChange={(e) => setRoundSettings((s) => ({ ...s, exploreEnabled: e.target.value !== "Disabled" }))}><option>Enabled</option><option>Disabled</option></select></td></tr></tbody></table><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={applyRoundStartingValues}>Prototype: Apply Starting Values</button><button className="classic-btn antro-action-btn" onClick={() => addLog(`Admin: round settings saved: ${gameName}, ${roundProfile}, speed ${roundSettings.gameSpeed}x, ${roundSettings.revives}.`, "Admin")}>Save Round Settings</button></div></Panel></Panel>; }
   function renderStatus() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedStatusPage();
     const supportCap = supportedPopulationCap(caps);
     const popInc = Math.floor(Math.max(0, supportCap - player.pop - player.rebels) * 0.015);
     const armyUnits = player.army.reduce((a, b) => a + b, 0);
@@ -5052,6 +5066,7 @@ export default function App() {
   }
 
   function renderBuild() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedBuildPage();
     const notice = renderCompletionNotice("build");
     if (notice) return notice;
     const pendingBuildPanel = player.buildOrder?.finishAt && !isFinishDue(player.buildOrder.finishAt, displayNow) ? renderPendingOrderPanel(pageLabel("build"), "construction", player.buildOrder.finishAt, cancelConstructionOrder) : null;
@@ -5075,6 +5090,173 @@ export default function App() {
         <div className="flex gap-2 mt-2 flex-wrap justify-center"><button className="classic-btn antro-action-btn" onClick={() => setBuildForm({ ...emptyBuildForm(), ...Object.fromEntries(Object.entries(day1Build).map(([k, v]) => [k, String(v)])) })}>Fill Day 1 Values</button><button className="classic-btn antro-action-btn" onClick={startCustomBuild} disabled={!!player.buildOrder}>{actionLabel("startConstruction")}</button>{adminMode && <button className="classic-btn antro-action-btn" onClick={completeBuild} disabled={!player.buildOrder}>{`Trigger Finish ${actionLabel("startConstruction").replace(/^Start /, "")}`}</button>}<button className="classic-btn antro-action-btn" onClick={() => setBuildSpeedFactor("1")}>{`Reset ${actionLabel("reset_speed_factor")}`}</button></div>
       </div>
     </Panel>;
+  }
+
+  function getHostedShellSnapshot() {
+    const summary = hostedRoundState.summary || null;
+    const round = summary?.round || null;
+    const player = summary?.player || null;
+    const playerState = summary?.playerState || null;
+    const buildings = summary?.buildings || null;
+    const armies = summary?.armies || null;
+    const actionSummary = summary?.actionSummary || null;
+    const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
+    const otherPlayers = Array.isArray(summary?.otherPlayers) ? summary.otherPlayers : [];
+    const roundSummary = summary?.roundSummary || null;
+    const proofBoundary = summary?.proofBoundary || null;
+    const currentPlayerSummary = summary?.currentPlayerSummary || null;
+    const identity = multiplayerIdentityState.summary || null;
+    const hostedGrantId = summary?.grantId || identity?.grantId || testerAccessRecord?.accessGrant?.grantId || testerAccessRecord?.accessGrant?.currentGrantId || "";
+    const playerId = identity?.currentPlayerId || identity?.playerId || player?.id || currentPlayerSummary?.playerId || currentPlayerSummary?.id || "";
+    const displayName = player?.displayName || currentPlayerSummary?.displayName || identity?.displayName || testerAccessRecord?.testerLabel || "Unknown player";
+    const testerLabel = player?.testerLabel || currentPlayerSummary?.testerLabel || identity?.testerLabel || testerAccessRecord?.testerLabel || "";
+    const playerLabel = player ? `${displayName}${testerLabel ? ` / ${testerLabel}` : ""}` : "Hosted round not entered yet";
+    const raceKey = playerState?.raceKey || playerState?.race || identity?.raceKey || currentPlayerSummary?.raceKey || "human";
+    const raceLabel = raceNameFromKey(raceKey);
+    const land = Number(playerState?.land ?? currentPlayerSummary?.land ?? 0);
+    const power = Number(playerState?.power ?? currentPlayerSummary?.power ?? 0);
+    const money = Number(playerState?.money ?? currentPlayerSummary?.money ?? 0);
+    const currentTick = round?.currentTick ?? roundSummary?.currentTick ?? "-";
+    const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+    const roundName = round?.roundName || "Shared Multiplayer DEV";
+    const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
+    const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
+    const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
+    const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
+    const dueNowCount = Number(actionSummary?.dueNow ?? 0);
+    const lastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
+    const latestResetAt = proofBoundary?.latestResetAt || roundSummary?.latestResetAt || null;
+    const latestResetEvent = proofBoundary?.latestResetEvent || roundSummary?.latestResetEvent || null;
+    const latestResetLabel = latestResetAt ? new Date(latestResetAt).toLocaleString() : "No proof reset yet";
+    const latestResetEventLabel = latestResetEvent ? `${latestResetEvent.eventType || latestResetEvent.visibility || "Reset event"} · ${latestResetEvent.id ? maskStableIdentifier(latestResetEvent.id) : "unknown"}` : "No reset event yet";
+    const otherPlayerSummary = otherPlayers.length ? otherPlayers.slice(0, 4).map((other) => other.displayName || other.testerLabel || maskStableIdentifier(other.id || "") || "Unknown").join(", ") : "None";
+    return {
+      summary,
+      round,
+      player,
+      playerState,
+      buildings,
+      armies,
+      actionSummary,
+      recentEvents,
+      otherPlayers,
+      roundSummary,
+      proofBoundary,
+      currentPlayerSummary,
+      hostedGrantId,
+      playerId,
+      displayName,
+      testerLabel,
+      playerLabel,
+      raceKey,
+      raceLabel,
+      land,
+      power,
+      money,
+      currentTick,
+      roundKey,
+      roundName,
+      roundStatus,
+      factoryCount,
+      queuedCount,
+      processedCount,
+      dueNowCount,
+      lastFetchLabel,
+      latestResetAt,
+      latestResetEvent,
+      latestResetLabel,
+      latestResetEventLabel,
+      otherPlayerSummary,
+      identity,
+    };
+  }
+
+  function renderHostedPageUnavailable(pageKey) {
+    return <Panel title={`Hosted ${pageLabel(pageKey) || pageKey || "Page"}`}>
+      <p className="text-orange-200 mb-3">This hosted DEV shell does not expose the {pageLabel(pageKey) || pageKey || "selected"} page yet. Use Status, Build, or the DEV diagnostics panel.</p>
+      <div className="flex gap-2 flex-wrap">
+        <button className="classic-btn antro-action-btn" onClick={() => setPage("status")}>Go to Status</button>
+        <button className="classic-btn antro-action-btn" onClick={() => setPage("build")}>Go to Build</button>
+        <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen(true)}>Open DEV proof panel / diagnostics</button>
+      </div>
+    </Panel>;
+  }
+
+  function renderHostedDiagnosticsPanel() {
+    return <div className="grid gap-4">{renderSharedMultiplayerPreviewPanel()}</div>;
+  }
+
+  function renderHostedStatusPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("status");
+    const hostedSummaryRows = [
+      ["Mode", "Hosted DEV Round"],
+      ["Current browser identity", hosted.playerLabel],
+      ["Player id", hosted.playerId ? maskStableIdentifier(hosted.playerId) : "—"],
+      ["Round name", hosted.roundName],
+      ["Round key", hosted.roundKey],
+      ["Round status", hosted.roundStatus],
+      ["Current tick", hosted.currentTick],
+      ["Race", hosted.raceLabel || "Unknown"],
+      ["Land", fmt(Math.max(0, Math.floor(hosted.land)))],
+      ["Power", fmt(Math.max(0, Math.floor(hosted.power)))],
+      ["Money", fmt(Math.max(0, Math.floor(hosted.money)))],
+      ["Factories", fmt(Math.max(0, Math.floor(hosted.factoryCount)))],
+      ["Queued actions", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+      ["Processed actions", fmt(Math.max(0, Math.floor(hosted.processedCount)))],
+      ["Other players", hosted.otherPlayerSummary],
+      ["Last hosted refresh", hosted.lastFetchLabel],
+    ];
+    return <div className="grid gap-4">
+      <Panel title="Status">
+        <p className="mb-3 text-orange-200">Hosted DEV Round mode uses canonical server state. This shell is separate from local save slots and keeps the player-facing view in the normal AntrophAI style.</p>
+        <OldTable rows={hostedSummaryRows} />
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setPage("build")} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>Go to Build</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 Factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
+  function renderHostedBuildPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("build");
+    return <div className="grid gap-4">
+      <Panel title="Build">
+        <p className="mb-3 text-orange-200">Hosted DEV Build stays focused on factory orders. Queue +1 Factory uses the hosted game-service and the current grant-linked player only.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Round status", hosted.roundStatus],
+          ["Current tick", hosted.currentTick],
+          ["Current factories", fmt(Math.max(0, Math.floor(hosted.factoryCount)))],
+          ["Queued factory builds", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+          ["Processed builds", fmt(Math.max(0, Math.floor(hosted.processedCount)))],
+          ["Other players", hosted.otherPlayerSummary],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 Factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
   }
 
   function renderDestroy() {
@@ -6102,6 +6284,7 @@ export default function App() {
 
 
   function renderPersistentStats() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedPersistentStats();
     const now = Date.now();
     const gmtClock = new Date(now).toLocaleString("en-GB", { timeZone: "UTC", hour12: false, weekday: "short", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
     const elapsedSeconds = Math.max(0, (now - (player.lastUpdatedAt || now)) / 1000);
@@ -6122,6 +6305,40 @@ export default function App() {
         <h3 className="mt-3 mb-1 text-orange-300 font-bold">Minerals</h3>
         <OldTable rows={mineralOrder.map((m) => [mineralLabel(m), fmt((player.minerals || {})[m] || 0)])} />
         {adminMode && <div className="mt-3 border border-red-900 bg-red-950/30 p-2 text-red-200"><div className="font-bold text-red-300 mb-1">Admin timing</div><OldTable rows={[["Game Speed", `${speed}x`], ["Seconds / Tick", Number(tickSeconds).toFixed(1)], ["Elapsed", `${elapsedSeconds.toFixed(1)}s`], ["Ticks Waiting", fmt(ticksWaiting)], ["Tick Eq.", Number(tickEquivalentWaiting).toFixed(3)]]} /></div>}
+      </div>
+    </aside>;
+  }
+
+  function renderHostedPersistentStats() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) {
+      return <aside className="border border-orange-800 bg-black/80 h-fit text-xs">
+        <h2 className="bg-[#240B02] border-b border-orange-800 px-2 py-1 text-orange-300 font-bold">Hosted DEV Round</h2>
+        <div className="p-2 text-orange-200">Redeem a real invite token and enter the hosted round to load canonical server state.</div>
+      </aside>;
+    }
+
+    return <aside className="border border-cyan-700 bg-black/80 h-fit text-xs">
+      <h2 className="bg-[#0b1d24] border-b border-cyan-800 px-2 py-1 text-cyan-200 font-bold">Hosted DEV Round</h2>
+      <div className="border-b border-cyan-900 px-2 py-1 text-cyan-100 bg-[#071015]">{hosted.roundName} · {hosted.roundKey}</div>
+      <div className="p-2">
+        <OldTable rows={[
+          ["You are", hosted.playerLabel],
+          ["Player id", hosted.playerId ? maskStableIdentifier(hosted.playerId) : "—"],
+          ["Grant id", hosted.hostedGrantId ? maskStableIdentifier(hosted.hostedGrantId) : "—"],
+          ["Current tick", hosted.currentTick],
+          ["Race", hosted.raceLabel || "Unknown"],
+          ["Land", fmt(Math.max(0, Math.floor(hosted.land)))],
+          ["Power", fmt(Math.max(0, Math.floor(hosted.power)))],
+          ["Money", fmt(Math.max(0, Math.floor(hosted.money)))],
+          ["Factories", fmt(Math.max(0, Math.floor(hosted.factoryCount)))],
+          ["Queued", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+          ["Processed", fmt(Math.max(0, Math.floor(hosted.processedCount)))],
+          ["Other players", hosted.otherPlayerSummary],
+        ]} />
+        <div className="mt-3 text-orange-200 text-[11px] leading-relaxed">
+          Canonical hosted state comes from the game-service. Local browser saves stay separate.
+        </div>
       </div>
     </aside>;
   }
@@ -6164,6 +6381,8 @@ export default function App() {
     setEntryStage("glw");
     setPlayerNameSetupComplete(false);
     setGlwRaceRegistered(true);
+    setActiveGameMode("local");
+    setHostedDiagnosticsOpen(false);
     setPage("status");
     addLog("Returned to the GLW launcher. Current game state preserved.", "Other");
   }
@@ -6810,14 +7029,18 @@ export default function App() {
       const testerLabel = identitySummary?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "";
       const displayName = identitySummary?.displayName || (multiplayerIdentityState.loading ? "Resolving multiplayer identity..." : testerAccessRecord?.accessMode === "invite-token" ? "Invite grant pending resolution" : "DEV Invite Tester");
       const resolvedFrom = identitySummary?.resolvedFrom || (testerAccessRecord?.accessMode === "invite-token" ? "invite grant pending" : "development fallback");
-      const identityResolved = Boolean(identitySummary?.playerId);
-      const playerId = identitySummary?.playerId || "";
+      const identityResolved = Boolean(identitySummary?.currentPlayerId || identitySummary?.playerId);
+      const playerId = identitySummary?.currentPlayerId || identitySummary?.playerId || "";
       const playerRoundId = identitySummary?.playerRoundId || "";
       const currentIdentityLabel = identityResolved ? displayName : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting invite-token identity resolution" : displayName;
       const identityGuardLabel = identityResolved
         ? (identitySummary?.requestedDisplayNameIgnored || identitySummary?.requestedTesterLabelIgnored ? "Requested labels ignored" : "No override detected")
         : "Not resolved yet";
-      const playerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
+      const totalPlayerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
+      const canonicalPlayerCount = Number(roundSummary?.canonicalPlayerCount ?? 0);
+      const playerCountLabel = canonicalPlayerCount > 0 ? "Canonical players" : "Players";
+      const playerCount = canonicalPlayerCount > 0 ? canonicalPlayerCount : totalPlayerCount;
+      const legacyPlayerCount = canonicalPlayerCount > 0 ? Number(roundSummary?.legacyPlayerCount ?? Math.max(0, totalPlayerCount - canonicalPlayerCount)) : 0;
       const factoryCount = Number(roundSummary?.factoryCount ?? 0);
       const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
       const processedCount = Number(roundSummary?.processedCount ?? actionSummary?.processed ?? 0);
@@ -6833,6 +7056,10 @@ export default function App() {
           testerLabel: player.testerLabel || "",
           playerId: player.id ? maskStableIdentifier(player.id) : "",
           playerRoundId: player.playerRoundId ? maskStableIdentifier(player.playerRoundId) : "",
+          grantId: player.grantId ? maskStableIdentifier(player.grantId) : "",
+          accessLinkId: player.accessLinkId ? maskStableIdentifier(player.accessLinkId) : "",
+          identityScope: player.identityScope || (player.isGrantLinked ? "canonical" : "diagnostic"),
+          isGrantLinked: Boolean(player.isGrantLinked),
           raceLabel: raceNameFromKey(state.raceKey || ""),
           tick: state.tick ?? "—",
           stateVersion: state.stateVersion ?? "—",
@@ -6902,7 +7129,8 @@ export default function App() {
           ], "Resolve identity before queueing a factory order so the selected grant is linked to the right player.")}
           {renderStatusCard("Round Proof Summary", [
             ["Round status", roundStatus],
-            ["Players", fmt(playerCount)],
+            [playerCountLabel, fmt(playerCount)],
+            ...(legacyPlayerCount > 0 ? [["Legacy players", fmt(legacyPlayerCount)]] : []),
             ["Factory count", fmt(Math.max(0, Math.floor(factoryCount)))],
             ["Queued rows", fmt(queuedCount)],
             ["Processed rows", fmt(processedCount)],
@@ -6930,6 +7158,7 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-bold text-orange-200">{details.title}</span>
                 {isCurrentPlayer ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">You</span> : null}
+                {details.identityScope === "canonical" ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">Canonical</span> : details.identityScope === "legacy" ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Legacy</span> : <span className="text-[10px] uppercase tracking-wide border border-orange-800 bg-black/50 text-orange-500 px-2 py-0.5">Diagnostic</span>}
                 {details.testerLabel ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{details.testerLabel}</span> : null}
                 {details.playerId ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Player {details.playerId}</span> : null}
               </div>
@@ -6980,7 +7209,7 @@ export default function App() {
           <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={!canEnterHostedDevRound || hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Loading hosted state..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
-          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>Return to launcher</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
           <span className="text-[10px] uppercase tracking-wide border border-cyan-700 bg-[#0b1d24] text-cyan-200 px-2 py-0.5">Invite-token hosted entry</span>
         </div>
         {hostedRoundState.error ? <div className="mb-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
@@ -7013,6 +7242,8 @@ export default function App() {
             ["Round key", hostedRoundKey],
             ["Current tick", hostedCurrentTick],
             ["Player", hostedPlayerLabel],
+            ["Current player id", hostedSummary?.currentPlayerId || hostedSummary?.player?.id ? maskStableIdentifier(hostedSummary.currentPlayerId || hostedSummary.player?.id) : "—"],
+            ["Identity scope", hostedSummary?.currentPlayerSummary?.identityScope || (hostedSummary?.currentPlayerSummary?.isGrantLinked ? "canonical" : "diagnostic")],
             ["Factory count", fmt(Math.max(0, Math.floor(hostedFactoryCount)))],
             ["Queued actions", fmt(hostedQueuedCount)],
             ["Processed actions", fmt(hostedProcessedCount)],
@@ -7226,6 +7457,17 @@ export default function App() {
 
   const pages = { status: renderStatus, admin: renderAdmin, assistance: renderSignalAssistance, help: renderHelp, records: renderRecords, raceLibrary: renderRaceLibrary, raceArchive: renderRaceArchivePage, raceArchivePlates: renderRaceArchivePlatesPage, buildingLibrary: renderBuildingLibrary, battleOutcomes: renderBattleOutcomes, build: renderBuild, destroy: renderDestroy, explore: renderExplore, barracks: renderBarracks, disband: renderDisband, war: renderWar, report: renderReport, battlelog: renderBattleLog, profile: renderProfile, allianceProfile: renderAllianceProfile, rankings: renderRankings, news: renderNews, bonus: () => <Panel title={pageLabel("bonus")}><p className="mb-3">Follow the bonus link once every 24 hours to receive 500,000 {currencyLabel}.</p><OldTable rows={[["Bonus Window", "welcome to 2001"], ["Time Until Next Bonus", bonusCountdownLabel()], ["Reward", `500,000 ${currencyLabel}`]]} /><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={openBonusWindow}>Open Bonus Window</button><button className="classic-btn antro-action-btn" onClick={claimBonus} disabled={bonusSecondsRemaining() > 0}>Claim Bonus</button></div></Panel>, bank: renderBank, factories: renderFactories, mines: renderMines, market: renderMarket, science: renderScience, alliances: renderAlliances, messages: renderMessages, missiles: renderMissiles, online: renderOnline, shops: renderShops, spy: renderSpyCenter, search: renderSearch, todo: renderSelfTests };
 
+  function renderMainContent() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) {
+      if (page === "status") return renderStatus();
+      if (page === "build") return renderBuild();
+      if (page === "todo") return renderHostedDiagnosticsPanel();
+      return renderHostedPageUnavailable(page);
+    }
+
+    return typeof pages[page] === "function" ? pages[page]() : renderStatus();
+  }
+
   if (!testerAccessRecord?.accepted) return renderTesterAccessGate();
   if (hydrated && !playerNameSetupComplete) return renderNameSetup();
 
@@ -7237,5 +7479,5 @@ export default function App() {
     <div className="flex justify-between gap-3 items-start mb-2"><div><div className="text-orange-300 font-bold">Message received</div><div className="text-xs text-orange-500">From {messagePopup.from}</div></div><button className="classic-btn antro-action-btn" onClick={() => setMessagePopup(null)}>x</button></div>
     <div className="text-sm whitespace-pre-wrap max-h-40 overflow-auto border-t border-orange-950 pt-2">{displayMessageBody(messagePopup).slice(0, 700)}{displayMessageBody(messagePopup).length > 700 ? "..." : ""}</div>
     <div className="flex gap-2 flex-wrap mt-3">{messagePopup.reportId ? <button className="classic-btn antro-action-btn" onClick={() => openMessageReport(messagePopup)}>View Report</button> : null}<button className="classic-btn antro-action-btn" onClick={() => { setPage("messages"); setMessagePopup(null); }}>Open Messages</button><button className="classic-btn antro-action-btn" onClick={() => setMessagePopup(null)}>Dismiss</button></div>
-  </div>}<header className="border border-orange-800 bg-black/80 mb-3"><div className="p-4 flex items-center gap-4"><div className="w-20 h-20 rounded-full border border-orange-700" style={{ background: "radial-gradient(circle at 35% 30%, #ff9d2e, #6d2508 45%, #120400 70%)" }} /><div><h1 className="text-3xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600">Private AntrophAI prototype · {PROTOTYPE_VERSION} · GLW single-round build</p></div></div><nav className="antro-top-nav border-t border-orange-900 p-2 flex flex-wrap gap-2"><button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>Return to Launcher</button>{adminMode && <MenuButton label="Project Log" page="todo" current={page} setPage={navigatePage} />}<MenuButton label="Field Manual" page="help" current={page} setPage={navigatePage} /><button className={`px-2 py-1 border text-xs md:text-sm ${adminMode ? "bg-red-900/80 border-red-300 text-red-100" : "bg-black border-red-800 text-red-400 hover:text-red-100"}`} onClick={() => { if (adminMode) { disableAdminAccess(); } else { requestAdminAccess(); } }}>Validate Identity</button><MenuButton label="View the Roster" page="rankings" current={page} setPage={navigatePage} /><MenuButton label="Signal for Assistance" page="assistance" current={page} setPage={navigatePage} /></nav></header><div className="grid xl:grid-cols-[190px_1fr_250px] md:grid-cols-[190px_1fr] gap-3"><aside className="border border-orange-800 bg-black/80 p-2 h-fit"><div className="antro-lhs-nav">{navItems.map(({ originalLabel, key: target }) => <MenuButton key={target} label={pageLabel(target) || originalLabel} originalLabel={originalLabel} icon={navIconByPage[target]} page={target} current={page} setPage={navigatePage} activeTone="identity" />)}{renderAdminSidebar()}</div></aside><main className={pageFlash ? "page-flash" : ""}>{typeof pages[page] === "function" ? pages[page]() : renderStatus()}</main>{renderPersistentStats()}</div></div>;
+  </div>}<header className="border border-orange-800 bg-black/80 mb-3"><div className="p-4 flex items-center gap-4"><div className="w-20 h-20 rounded-full border border-orange-700" style={{ background: "radial-gradient(circle at 35% 30%, #ff9d2e, #6d2508 45%, #120400 70%)" }} /><div><h1 className="text-3xl md:text-5xl font-bold tracking-widest"><span className="text-orange-300">ANTROPH</span><span className="ml-1 text-cyan-200" style={{ textShadow: "0 0 6px #22d3ee, 0 0 14px #0ea5e9, 0 0 24px #38bdf8" }}>AI</span></h1><p className="text-orange-600">{activeGameMode === "hosted" && hostedRoundState.summary ? `Invite-token hosted session · ${PROTOTYPE_VERSION} · canonical server round state` : `Private AntrophAI prototype · ${PROTOTYPE_VERSION} · GLW single-round build`}</p></div></div><nav className="antro-top-nav border-t border-orange-900 p-2 flex flex-wrap gap-2"><button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>{adminMode && <MenuButton label="Project Log" page="todo" current={page} setPage={navigatePage} />}<MenuButton label="Field Manual" page="help" current={page} setPage={navigatePage} /><button className={`px-2 py-1 border text-xs md:text-sm ${adminMode ? "bg-red-900/80 border-red-300 text-red-100" : "bg-black border-red-800 text-red-400 hover:text-red-100"}`} onClick={() => { if (adminMode) { disableAdminAccess(); } else { requestAdminAccess(); } }}>Validate Identity</button><MenuButton label="View the Roster" page="rankings" current={page} setPage={navigatePage} /><MenuButton label="Signal for Assistance" page="assistance" current={page} setPage={navigatePage} /></nav></header><div className="grid xl:grid-cols-[190px_1fr_250px] md:grid-cols-[190px_1fr] gap-3"><aside className="border border-orange-800 bg-black/80 p-2 h-fit"><div className="antro-lhs-nav">{navItems.map(({ originalLabel, key: target }) => <MenuButton key={target} label={pageLabel(target) || originalLabel} originalLabel={originalLabel} icon={navIconByPage[target]} page={target} current={page} setPage={navigatePage} activeTone="identity" />)}{renderAdminSidebar()}</div></aside><main className={pageFlash ? "page-flash" : ""}>{renderMainContent()}</main>{renderPersistentStats()}</div></div>;
 }
