@@ -15,28 +15,15 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
 ];
 const PROTOTYPE_VERSION = "v0.43.1";
-const INVITE_TOKEN_SERVICE_URL = String(import.meta.env.VITE_INVITE_TOKEN_SERVICE_URL || "https://antrophai-glwtest-passkey.onrender.com").replace(/\/+$/, "");
-const INVITE_TOKEN_SERVICE_HOST = (() => {
-  try {
-    return INVITE_TOKEN_SERVICE_URL ? new URL(INVITE_TOKEN_SERVICE_URL).host : null;
-  } catch {
-    return null;
-  }
-})();
-const GAME_SERVICE_URL = String(import.meta.env.VITE_GAME_SERVICE_URL || "https://antrophai-game-service-dev.onrender.com").replace(/\/+$/, "");
-const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 const ADMIN_ROUND_SLOT_KEY = "admin-start-local";
-const TESTER_ACCESS_KEY = "antrophaiTesterAccessAccepted";
-const TESTER_ACCESS_ALLOWLIST = {
-  "geddes-test": "geddes-test",
-  "proteus-test": "proteus-test",
-  "picket-test": "picket-test",
-};
 
 const DISPLAY_MODEL_DEFAULT = "hybrid";
 const DISPLAY_MODEL_OPTIONS = {
@@ -1205,157 +1192,6 @@ function runSelfTests() { const tests = []; const assert = (name, condition) => 
   assert("War pair key ignores direction", warPairKey("player:A", "alliance:B") === warPairKey("alliance:B", "player:A"));
   assert("Protection decays by half an hour per full tick equivalent", decayProtection({ protectionHours: 2 }, 1).protectionHours === 1.5); assert("Old time formats Day 1 correctly", oldTime(77500) === "21 hours and 31 minutes"); assert("Due finish labels expose ready orders", dueNextStepLabel({ finishAt: Date.now() - 1 }, "Barracks", "Training") === "Training ready - click Barracks"); assert("Rankings sort descending", sortByPowerDesc([{ power: 1 }, { power: 3 }, { power: 2 }])[0].power === 3); assert("Reserved build land keeps total land stable", totalEmpireLand({ freeLand: 0, buildings: {}, buildOrder: { build: day1Build } }) === 1000); assert("Turbo tick conversion at speed 50", dueGameTicks(36, 50) === 1); assert("Fractional elapsed production changes DB before a full tick", applyElapsedProductionPure({ race: "lithi", pop: 0, rebels: 0, food: 0, water: 0, energy: 0, cards: 0, banked: 0, protectionHours: 0, army: [0,0,0,0,0,0], minerals: emptyMinerals(), scanners: 0, missiles: 0, buildings: { ...emptyBuildings(), living_areas: 100, nutrition_suppliers: 100, water_purifiers: 100, mineral_extractors: 25 } }, 0.1, { Hitera: "20", Feronga: "20", Antoria: "20", Sophitor: "20", Armidi: "20" }, { construction: "100", scanners: "0", missiles: "0" }).pop > 0); assert("Population grows when Living Areas exist", applyEconomyTickPure({ pop: 0, rebels: 0, food: 0, water: 0, energy: 0, cards: 0, banked: 0, protectionHours: 0, army: [0,0,0,0,0,0], buildings: { ...emptyBuildings(), living_areas: 100, nutrition_suppliers: 100, water_purifiers: 100 } }).pop > 0); assert("Admin time skip is literal real time, not multiplied by GLW speed", compactHms((20 * 60 * 1000) / 1000) === "00:20:00"); assert("Admin one-tick skip follows current round speed", compactHms((30 * 60 * 1000 / 4) / 1000) === "00:07:30"); assert("GLW recent-hit lockout is 7m30s real", compactHms(recentAttackBlockMsForSettings(roundProfiles["Godlike Warfare"]) / 1000) === "00:07:30"); assert("GLW retal window is 30m real", compactHms(retalWindowMsForSettings(roundProfiles["Godlike Warfare"]) / 1000) === "00:30:00"); assert("Admin shift can overshoot orders into due state", isFinishDue(shiftFinishAt({ finishAt: Date.now() + 60000 }, 60 * 1000).finishAt, Date.now()) === true); assert("Turret science reaches intended floors at level 60", Math.floor(turretDisableCostPerTurret(60)) === 10000 && Math.floor(turretEnergyPerShot(60)) === 50); return tests; }
 
-function safeParseSave(raw) { try { return raw ? JSON.parse(raw) : null; } catch { return null; } }
-function safeLoadStorageKey(storageKey = SAVE_KEY) { try { if (typeof window === "undefined") return null; return safeParseSave(window.localStorage.getItem(storageKey)); } catch { return null; } }
-function safeLoadSave() { return safeLoadStorageKey(SAVE_KEY); }
-function safeWriteStorageKey(storageKey, payload) { try { if (typeof window !== "undefined") window.localStorage.setItem(storageKey, JSON.stringify(payload)); } catch {} }
-function safeWriteSave(payload) { safeWriteStorageKey(SAVE_KEY, payload); }
-function safeDeleteStorageKey(storageKey) { try { if (typeof window !== "undefined") window.localStorage.removeItem(storageKey); } catch {} }
-function safeLoadRoundSlot(slotKey) { return safeLoadStorageKey(roundSlotSaveKey(slotKey)); }
-function safeWriteRoundSlot(slotKey, payload) { if (!slotKey) return; safeWriteStorageKey(roundSlotSaveKey(slotKey), payload); }
-function safeReadRoundSlotIndex() { const index = safeLoadStorageKey(ROUND_SLOT_INDEX_KEY); return Array.isArray(index) ? index : []; }
-function safeWriteRoundSlotIndex(index = []) { safeWriteStorageKey(ROUND_SLOT_INDEX_KEY, Array.isArray(index) ? index : []); }
-function upsertRoundSlotIndexEntry(index = [], entry = {}) { const key = entry.slotKey; if (!key) return Array.isArray(index) ? index : []; const without = (Array.isArray(index) ? index : []).filter((item) => item?.slotKey !== key); return [{ ...entry, savedAt: entry.savedAt || Date.now() }, ...without].slice(0, 20); }
-function safeDeleteRoundSlot(slotKey) { try { if (typeof window !== "undefined") window.localStorage.removeItem(roundSlotSaveKey(slotKey)); } catch {} }
-function normaliseAccessGrant(value) {
-  if (!value || typeof value !== "object") return null;
-  const grantId = cleanSingleLineText(String(value.grantId || value.currentGrantId || "").trim(), 128);
-  if (!grantId) return null;
-  const currentGrantId = cleanSingleLineText(String(value.currentGrantId || grantId).trim(), 128) || grantId;
-  const tokenId = cleanSingleLineText(String(value.tokenId || "").trim(), 128) || null;
-  const testerLabel = cleanSingleLineText(String(value.testerLabel || "").trim(), 128) || null;
-  const tokenHashPrefix = cleanSingleLineText(String(value.tokenHashPrefix || "").trim(), 32) || null;
-  const issuedAt = cleanSingleLineText(String(value.issuedAt || "").trim(), 64) || null;
-  const expiresAt = cleanSingleLineText(String(value.expiresAt || "").trim(), 64) || null;
-  const lastRevalidatedAt = cleanSingleLineText(String(value.lastRevalidatedAt || "").trim(), 64) || null;
-  return {
-    grantId,
-    currentGrantId,
-    tokenId,
-    testerLabel,
-    tokenHashPrefix,
-    issuedAt,
-    expiresAt,
-    lastRevalidatedAt,
-    accessMode: "invite-token",
-  };
-}
-function normaliseTesterAccessRecord(value) {
-  if (!value || typeof value !== "object" || !value.accepted) return null;
-  const codeLabel = typeof value.codeLabel === "string" && value.codeLabel.trim() ? value.codeLabel.trim() : null;
-  const acceptedAt = Number(value.acceptedAt || 0);
-  const accessGrant = normaliseAccessGrant(value.accessGrant);
-  const accessMode = value.accessMode === "invite-token" || Boolean(accessGrant) ? "invite-token" : "development-fallback";
-  const testerLabel = typeof value.testerLabel === "string" && value.testerLabel.trim()
-    ? cleanSingleLineText(value.testerLabel.trim(), 128)
-    : accessGrant?.testerLabel || null;
-  return {
-    accepted: true,
-    accessMode,
-    codeLabel,
-    testerLabel,
-    acceptedAt: Number.isFinite(acceptedAt) && acceptedAt > 0 ? acceptedAt : null,
-    accessGrant,
-  };
-}
-function safeLoadTesterAccess() { return normaliseTesterAccessRecord(safeLoadStorageKey(TESTER_ACCESS_KEY)); }
-function safeWriteTesterAccess(payload) { safeWriteStorageKey(TESTER_ACCESS_KEY, payload); }
-function safeClearTesterAccess() { try { if (typeof window !== "undefined") window.localStorage.removeItem(TESTER_ACCESS_KEY); } catch {} }
-function testerAccessRecordForCode(code) {
-  const entered = String(code || "").trim().toLowerCase();
-  const codeLabel = TESTER_ACCESS_ALLOWLIST[entered];
-  if (!codeLabel) return null;
-  return { accepted: true, accessMode: "development-fallback", codeLabel, testerLabel: null, acceptedAt: Date.now(), accessGrant: null };
-}
-function makeInviteTokenClientNonce() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `client-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-function inviteTokenFailureMessage(code) {
-  switch (code) {
-    case "empty_token":
-      return "Enter an invite token first.";
-    case "token_invalid":
-      return "This invite token was not recognised.";
-    case "token_claimed":
-      return "This invite token has already been claimed.";
-    case "token_revoked":
-      return "This invite token is no longer active.";
-    case "token_expired":
-      return "This invite token is no longer active.";
-    case "build_not_allowed":
-      return "This invite token is not available for this build.";
-    case "rate_limited":
-      return "Too many invite redemption attempts. Please try again later.";
-    case "service_unavailable":
-      return "The invite service could not be reached. Please try again later.";
-    default:
-      return "The invite token could not be redeemed.";
-  }
-}
-function maskStableIdentifier(value, prefixLength = 6, suffixLength = 4) {
-  const text = cleanSingleLineText(String(value || "").trim(), 256);
-  if (!text) return "";
-  if (text.length <= prefixLength + suffixLength + 1) return text;
-  return `${text.slice(0, prefixLength)}…${text.slice(-suffixLength)}`;
-}
-function hostedGameServiceFailureMessage() {
-  return "Could not reach the hosted game service. Check the DEV game-service health endpoint.";
-}
-function testerAccessModeLabel(record) {
-  if (!record?.accepted) return "";
-  if (record.accessMode === "invite-token") {
-    const testerLabel = record.testerLabel || record.accessGrant?.testerLabel || "";
-    return testerLabel ? `Access: invite token | Tester: ${testerLabel}` : "Access: invite token";
-  }
-  return "Access: development fallback";
-}
-function multiplayerPreviewFailureMessage(status, errorCode) {
-  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV preview is currently disabled.";
-  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
-  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
-    return hostedGameServiceFailureMessage();
-  }
-  return "Shared multiplayer preview could not be loaded.";
-}
-
-function multiplayerIdentityFailureMessage(status, errorCode) {
-  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer identity resolution is currently disabled.";
-  if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. Resolve identity again after redeeming a fresh invite token.";
-  if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
-  if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
-  if (errorCode === "player_not_found") return "The player linked to that access grant was not found.";
-  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
-  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
-    return hostedGameServiceFailureMessage();
-  }
-  return hostedGameServiceFailureMessage();
-}
-
-function multiplayerDevActionFailureMessage(status, errorCode, playerLabel = "the selected player") {
-  if (errorCode === "dev_endpoints_disabled") return "Shared multiplayer DEV actions are currently disabled.";
-  if (errorCode === "identity_not_provided") return "Your tester access exists, but no invite grant was available. Reset tester access and redeem a real invite token.";
-  if (errorCode === "grant_not_found") return "No multiplayer access link exists for this grant. Resolve identity again after redeeming a fresh invite token.";
-  if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
-  if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
-  if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
-  if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
-  if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;
-  if (errorCode === "player_not_joined") return `${playerLabel} is not joined to the shared round.`;
-  if (errorCode === "tick_in_progress") return "A manual DEV tick is already running.";
-  if (errorCode === "queue_build_factory_failed") return "The factory order could not be queued.";
-  if (errorCode === "manual_tick_failed") return "The manual DEV tick could not be completed.";
-  if (errorCode === "build_factory_failed") return "The legacy immediate proof could not be completed.";
-  if (errorCode === "reset_proof_round_failed") return "The DEV proof state could not be reset.";
-  if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
-    return hostedGameServiceFailureMessage();
-  }
-  return hostedGameServiceFailureMessage();
-}
-
 function retalWindowMsForSettings(settings) {
   const speed = Math.max(1, Number(settings?.gameSpeed || 1));
   return Math.floor((2 * 60 * 60 * 1000) / speed);
@@ -2355,41 +2191,13 @@ export default function App() {
     setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   }
   function multiplayerIdentityFallbackSummary() {
-    const accessGrant = testerAccessRecord?.accessGrant || null;
-    const testerLabel = cleanSingleLineText(testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "", 80).trim() || null;
-    const displayName = cleanSingleLineText(testerLabel || "DEV Invite Tester", 80).trim() || "DEV Invite Tester";
-    return {
-      grantId: null,
-      resolvedFrom: testerAccessRecord?.accessMode === "invite-token" ? "pending-resolution" : "development-fallback",
-      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-      roundName: "Shared Multiplayer DEV",
-      roundStatus: "draft",
-      currentTick: 0,
-      playerId: null,
-      playerRoundId: null,
-      displayName,
-      testerLabel,
-    };
+    return buildIdentityFallbackSummary(testerAccessRecord);
   }
   function multiplayerIdentityRequestBody() {
-    const resolved = multiplayerIdentityState.summary || null;
-    const accessGrant = testerAccessRecord?.accessGrant || null;
-    const testerLabel = cleanSingleLineText(resolved?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "", 80).trim() || null;
-    const displayName = cleanSingleLineText(resolved?.displayName || testerLabel || "DEV Invite Tester", 80).trim() || "DEV Invite Tester";
-    return {
-      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-      grantId: resolved?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || null,
-      testerLabel,
-      displayName,
-    };
+    return buildIdentityRequestBody({ resolvedSummary: multiplayerIdentityState.summary, testerAccessRecord });
   }
   function hostedRoundRequestBody() {
-    const accessGrant = testerAccessRecord?.accessGrant || null;
-    const grantId = cleanSingleLineText(String(hostedRoundState.summary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || ""), 128).trim() || "";
-    return {
-      roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-      grantId,
-    };
+    return buildHostedRoundRequestBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord });
   }
   async function refreshMultiplayerHealth() {
     if (multiplayerHealthState.loading) return;
@@ -2401,45 +2209,15 @@ export default function App() {
     setMultiplayerHealthState((prev) => ({ ...prev, loading: true, error: "" }));
     const fetchedAt = Date.now();
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${GAME_SERVICE_URL}/health`, {
-          method: "GET",
-          headers: { "Accept": "application/json" },
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try {
-            result = JSON.parse(text);
-          } catch {
-            result = { raw: text };
-          }
-        }
+      const { response, result } = await fetchGameServiceHealth();
+      const summary = normaliseHealthSummary(result, response.ok);
 
-        const summary = {
-          reachable: Boolean(response.ok && result?.ok !== false),
-          service: result?.service || "antrophai-game-service",
-          version: result?.version || null,
-          environment: result?.environment || null,
-          dbReachable: result?.dbReachable ?? null,
-          inviteLedgerReachable: result?.schemaCheck?.invite_tokens?.reachable ?? null,
-          devEndpointsEnabled: result?.devEndpointsEnabled ?? null,
-          supabaseConfigured: result?.supabaseConfigured ?? null,
-          allowedOriginsCount: result?.allowedOriginsCount ?? null,
-        };
-
-        setMultiplayerHealthState({
-          loading: false,
-          error: response.ok ? "" : hostedGameServiceFailureMessage(),
-          fetchedAt,
-          summary,
-        });
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
-      }
+      setMultiplayerHealthState({
+        loading: false,
+        error: response.ok ? "" : hostedGameServiceFailureMessage(),
+        fetchedAt,
+        summary,
+      });
     } catch {
       setMultiplayerHealthState({
         loading: false,
@@ -2460,61 +2238,20 @@ export default function App() {
     setMultiplayerPreviewState((prev) => ({ ...prev, loading: true, error: "" }));
     const fetchedAt = Date.now();
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/round-summary?roundKey=${encodeURIComponent(MULTIPLAYER_PREVIEW_ROUND_KEY)}`, {
-          method: "GET",
-          headers: { "Accept": "application/json" },
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try {
-            result = JSON.parse(text);
-          } catch {
-            result = { raw: text };
-          }
-        }
+      const { response, result } = await fetchDevRoundSummary(MULTIPLAYER_PREVIEW_ROUND_KEY);
 
-        if (!response.ok || result?.ok === false) {
-          const errorCode = result?.error || null;
-          const errorMessage = multiplayerPreviewFailureMessage(response.status, errorCode);
-          setMultiplayerPreviewState({ loading: false, error: errorMessage, fetchedAt, summary: null });
-          return;
-        }
-
-        const summary = {
-          round: result?.round || null,
-          players: Array.isArray(result?.players) ? result.players.map((player) => ({ ...player, factoryCount: Number(player?.factoryCount ?? 0) })) : [],
-          recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
-          recentPublicEvents: Array.isArray(result?.recentPublicEvents) ? result.recentPublicEvents : [],
-          recentActions: Array.isArray(result?.recentActions) ? result.recentActions : [],
-          recentTickLogs: Array.isArray(result?.recentTickLogs) ? result.recentTickLogs : [],
-          actionSummary: result?.actionSummary || null,
-          proofBoundary: result?.proofBoundary || null,
-          roundSummary: result?.roundSummary || null,
-        };
-        setMultiplayerPreviewState({ loading: false, error: "", fetchedAt, summary });
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
+      if (!response.ok || result?.ok === false) {
+        const errorCode = result?.error || null;
+        const errorMessage = multiplayerPreviewFailureMessage(response.status, errorCode);
+        setMultiplayerPreviewState({ loading: false, error: errorMessage, fetchedAt, summary: null });
+        return;
       }
+
+      const summary = normalisePreviewSummary(result);
+      setMultiplayerPreviewState({ loading: false, error: "", fetchedAt, summary });
     } catch (error) {
       setMultiplayerPreviewState({ loading: false, error: multiplayerPreviewFailureMessage(503, "service_unavailable"), fetchedAt, summary: null });
     }
-  }
-  function hostedRoundFailureMessage(status, errorCode) {
-    if (errorCode === "dev_endpoints_disabled") return "Hosted DEV round entry is currently disabled.";
-    if (errorCode === "identity_not_provided") return "Redeem a real invite token before entering a hosted round.";
-    if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
-    if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
-    if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
-    if (errorCode === "player_not_found") return "The hosted player linked to that grant was not found.";
-    if (status >= 500 || errorCode === "supabase_not_configured" || errorCode === "service_unavailable") {
-      return hostedGameServiceFailureMessage();
-    }
-    return "Hosted DEV round state could not be loaded.";
   }
   async function refreshHostedDevRound({ forceEnter = false } = {}) {
     if (hostedRoundState.loading) return;
@@ -2545,62 +2282,25 @@ export default function App() {
     setHostedRoundState((prev) => ({ ...prev, loading: true, error: "", message: "" }));
     const fetchedAt = Date.now();
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/hosted-round/enter`, {
-          method: "POST",
-          headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify(hostedRoundRequestBody()),
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try {
-            result = JSON.parse(text);
-          } catch {
-            result = { raw: text };
-          }
-        }
+      const { response, result } = await postHostedRoundEnter(hostedRoundRequestBody());
 
-        if (!response.ok || result?.ok === false) {
-          const errorCode = result?.error || null;
-          const errorMessage = hostedRoundFailureMessage(response.status, errorCode);
-          setHostedRoundState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
-          return null;
-        }
-
-        const summary = {
-          round: result?.round || null,
-          player: result?.player || null,
-          playerState: result?.playerState || null,
-          buildings: result?.buildings || null,
-          armies: result?.armies || null,
-          actionSummary: result?.actionSummary || null,
-          recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
-          otherPlayers: Array.isArray(result?.otherPlayers) ? result.otherPlayers : [],
-          roundSummary: result?.roundSummary || null,
-          proofBoundary: result?.proofBoundary || null,
-          canonicalState: result?.canonicalState || null,
-          accessLinkCreated: Boolean(result?.accessLinkCreated),
-          resolvedFrom: result?.resolvedFrom || null,
-          grantId: result?.grantId || grantId,
-          currentPlayerId: result?.currentPlayerId || result?.player?.id || null,
-          currentPlayerSummary: result?.currentPlayerSummary || null,
-        };
-        setHostedRoundState({
-          loading: false,
-          error: "",
-          message: result?.message || `Hosted DEV round ready for ${summary.player?.displayName || "the selected player"}.`,
-          fetchedAt,
-          summary,
-        });
-        setActiveGameMode("hosted");
-        return summary;
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
+      if (!response.ok || result?.ok === false) {
+        const errorCode = result?.error || null;
+        const errorMessage = hostedRoundFailureMessage(response.status, errorCode);
+        setHostedRoundState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
+        return null;
       }
+
+      const summary = normaliseHostedRoundSummary(result, grantId);
+      setHostedRoundState({
+        loading: false,
+        error: "",
+        message: result?.message || `Hosted DEV round ready for ${summary.player?.displayName || "the selected player"}.`,
+        fetchedAt,
+        summary,
+      });
+      setActiveGameMode("hosted");
+      return summary;
     } catch (error) {
       setHostedRoundState({ loading: false, error: hostedRoundFailureMessage(503, "service_unavailable"), message: "", fetchedAt, summary: null });
       return null;
@@ -2649,65 +2349,31 @@ export default function App() {
     setMultiplayerIdentityState((prev) => ({ ...prev, loading: true, error: "", message: "" }));
     const fetchedAt = Date.now();
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${GAME_SERVICE_URL}/api/dev/identity/resolve-player`, {
-          method: "POST",
-          headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify({
-            roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-            grantId,
-            testerLabel,
-            displayName,
-          }),
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try {
-            result = JSON.parse(text);
-          } catch {
-            result = { raw: text };
-          }
-        }
+      const { response, result } = await postResolvePlayerIdentity({
+        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
+        grantId,
+        testerLabel,
+        displayName,
+      });
 
-        if (!response.ok || result?.ok === false) {
-          const errorCode = result?.error || null;
-          const errorMessage = multiplayerIdentityFailureMessage(response.status, errorCode);
-          setMultiplayerIdentityState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
-          return;
-        }
-
-        const identity = result?.identity || null;
-        const summary = identity ? {
-          grantId: identity.grantId || null,
-          resolvedFrom: identity.resolvedFrom || "invite_grant",
-          roundKey: identity.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY,
-          roundName: identity.roundName || "Shared Multiplayer DEV",
-          roundStatus: identity.roundStatus || null,
-          currentTick: Number(identity.currentTick ?? 0),
-          currentPlayerId: identity.currentPlayerId || identity.playerId || null,
-          playerId: identity.playerId || null,
-          playerRoundId: identity.playerRoundId || null,
-          displayName: identity.displayName || displayName,
-          testerLabel: identity.testerLabel || testerLabel,
-          requestedDisplayNameIgnored: Boolean(identity.requestedDisplayNameIgnored),
-          requestedTesterLabelIgnored: Boolean(identity.requestedTesterLabelIgnored),
-        } : null;
-        const ignoredRequestLabels = Boolean(identity?.requestedDisplayNameIgnored || identity?.requestedTesterLabelIgnored);
-        setMultiplayerIdentityState({
-          loading: false,
-          error: "",
-          message: summary ? `You are linked as ${summary.displayName}.${ignoredRequestLabels ? " Requested labels were ignored in favor of the invite-token identity." : ""}` : "",
-          fetchedAt,
-          summary,
-        });
-        refreshMultiplayerPreview();
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
+      if (!response.ok || result?.ok === false) {
+        const errorCode = result?.error || null;
+        const errorMessage = multiplayerIdentityFailureMessage(response.status, errorCode);
+        setMultiplayerIdentityState({ loading: false, error: errorMessage, message: "", fetchedAt, summary: null });
+        return;
       }
+
+      const identity = result?.identity || null;
+      const summary = normaliseIdentitySummary(identity, { displayName, testerLabel });
+      const ignoredRequestLabels = Boolean(identity?.requestedDisplayNameIgnored || identity?.requestedTesterLabelIgnored);
+      setMultiplayerIdentityState({
+        loading: false,
+        error: "",
+        message: summary ? `You are linked as ${summary.displayName}.${ignoredRequestLabels ? " Requested labels were ignored in favor of the invite-token identity." : ""}` : "",
+        fetchedAt,
+        summary,
+      });
+      refreshMultiplayerPreview();
     } catch (error) {
       setMultiplayerIdentityState({ loading: false, error: multiplayerIdentityFailureMessage(503, "service_unavailable"), message: "", fetchedAt, summary: null });
     }
@@ -2754,52 +2420,32 @@ export default function App() {
     const attemptedAt = Date.now();
     setMultiplayerDevActionState((prev) => ({ ...prev, loading: true, error: "" }));
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${GAME_SERVICE_URL}${endpointPath}`, {
-          method: "POST",
-          headers: { "Accept": "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try {
-            result = JSON.parse(text);
-          } catch {
-            result = { raw: text };
-          }
-        }
+      const { response, result } = await postDevAction(endpointPath, requestBody);
 
-        if (!response.ok || result?.ok === false) {
-          const errorCode = result?.error || null;
-          const errorMessage = multiplayerDevActionFailureMessage(response.status, errorCode, multiplayerIdentityState.summary?.displayName || multiplayerIdentityState.summary?.testerLabel || "the selected player");
-          setMultiplayerDevActionState({
-            loading: false,
-            error: errorMessage,
-            lastActionAt: attemptedAt,
-            lastActionType: actionType,
-            lastActionResult: null,
-            lastActionMessage: null,
-          });
-          return;
-        }
-
+      if (!response.ok || result?.ok === false) {
+        const errorCode = result?.error || null;
+        const errorMessage = multiplayerDevActionFailureMessage(response.status, errorCode, multiplayerIdentityState.summary?.displayName || multiplayerIdentityState.summary?.testerLabel || "the selected player");
         setMultiplayerDevActionState({
           loading: false,
-          error: "",
+          error: errorMessage,
           lastActionAt: attemptedAt,
           lastActionType: actionType,
-          lastActionResult: result,
-          lastActionMessage: result?.message || successMessage,
+          lastActionResult: null,
+          lastActionMessage: null,
         });
-        if (typeof onSuccessRefresh === "function") {
-          onSuccessRefresh();
-        }
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
+        return;
+      }
+
+      setMultiplayerDevActionState({
+        loading: false,
+        error: "",
+        lastActionAt: attemptedAt,
+        lastActionType: actionType,
+        lastActionResult: result,
+        lastActionMessage: result?.message || successMessage,
+      });
+      if (typeof onSuccessRefresh === "function") {
+        onSuccessRefresh();
       }
     } catch {
       setMultiplayerDevActionState({
@@ -2954,53 +2600,37 @@ export default function App() {
     }
 
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 12_000) : null;
-      try {
-        const response = await fetch(`${INVITE_TOKEN_SERVICE_URL}/redeem`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller?.signal,
-        });
-        const text = await response.text();
-        let result = {};
-        if (text) {
-          try { result = JSON.parse(text); } catch { result = { raw: text }; }
-        }
-        if (!response.ok || result?.ok === false) {
-          const errorCode = result?.error?.code || (response.status === 409 ? "token_claimed" : response.status === 403 ? "token_revoked" : response.status === 404 ? "token_invalid" : response.status === 410 ? "token_expired" : response.status === 429 ? "rate_limited" : response.status >= 500 ? "service_unavailable" : "service_unavailable");
-          setTesterAccessError(inviteTokenFailureMessage(errorCode));
-          return;
-        }
-
-        const accessGrant = normaliseAccessGrant(result?.accessGrant || result?.grant || null);
-        if (!accessGrant) {
-          setTesterAccessError("The invite service returned an incomplete access grant.");
-          return;
-        }
-
-        const record = {
-          accepted: true,
-          accessMode: "invite-token",
-          codeLabel: null,
-          testerLabel: accessGrant.testerLabel || null,
-          acceptedAt: Date.now(),
-          accessGrant,
-        };
-        safeWriteTesterAccess(record);
-        setTesterAccessRecord(record);
-        setTesterAccessDraft("");
-        setTesterAccessCommentDraft("");
-        setTesterAccessError("");
-        setMultiplayerHealthState({ loading: false, error: "", fetchedAt: null, summary: null });
-        setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
-        setMultiplayerIdentityState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
-        setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
-        setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
-      } finally {
-        if (timeoutId) window.clearTimeout(timeoutId);
+      const { response, result } = await postInviteTokenRedeem(payload);
+      if (!response.ok || result?.ok === false) {
+        const errorCode = result?.error?.code || (response.status === 409 ? "token_claimed" : response.status === 403 ? "token_revoked" : response.status === 404 ? "token_invalid" : response.status === 410 ? "token_expired" : response.status === 429 ? "rate_limited" : response.status >= 500 ? "service_unavailable" : "service_unavailable");
+        setTesterAccessError(inviteTokenFailureMessage(errorCode));
+        return;
       }
+
+      const accessGrant = normaliseAccessGrant(result?.accessGrant || result?.grant || null);
+      if (!accessGrant) {
+        setTesterAccessError("The invite service returned an incomplete access grant.");
+        return;
+      }
+
+      const record = {
+        accepted: true,
+        accessMode: "invite-token",
+        codeLabel: null,
+        testerLabel: accessGrant.testerLabel || null,
+        acceptedAt: Date.now(),
+        accessGrant,
+      };
+      safeWriteTesterAccess(record);
+      setTesterAccessRecord(record);
+      setTesterAccessDraft("");
+      setTesterAccessCommentDraft("");
+      setTesterAccessError("");
+      setMultiplayerHealthState({ loading: false, error: "", fetchedAt: null, summary: null });
+      setMultiplayerPreviewState({ loading: false, error: "", fetchedAt: null, summary: null });
+      setMultiplayerIdentityState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
+      setMultiplayerDevActionState({ loading: false, error: "", lastActionAt: null, lastActionType: null, lastActionResult: null, lastActionMessage: null });
+      setHostedRoundState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
     } catch (error) {
       setTesterAccessError(inviteTokenFailureMessage("service_unavailable"));
     } finally {
@@ -5093,82 +4723,7 @@ export default function App() {
   }
 
   function getHostedShellSnapshot() {
-    const summary = hostedRoundState.summary || null;
-    const round = summary?.round || null;
-    const player = summary?.player || null;
-    const playerState = summary?.playerState || null;
-    const buildings = summary?.buildings || null;
-    const armies = summary?.armies || null;
-    const actionSummary = summary?.actionSummary || null;
-    const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
-    const otherPlayers = Array.isArray(summary?.otherPlayers) ? summary.otherPlayers : [];
-    const roundSummary = summary?.roundSummary || null;
-    const proofBoundary = summary?.proofBoundary || null;
-    const currentPlayerSummary = summary?.currentPlayerSummary || null;
-    const identity = multiplayerIdentityState.summary || null;
-    const hostedGrantId = summary?.grantId || identity?.grantId || testerAccessRecord?.accessGrant?.grantId || testerAccessRecord?.accessGrant?.currentGrantId || "";
-    const playerId = identity?.currentPlayerId || identity?.playerId || player?.id || currentPlayerSummary?.playerId || currentPlayerSummary?.id || "";
-    const displayName = player?.displayName || currentPlayerSummary?.displayName || identity?.displayName || testerAccessRecord?.testerLabel || "Unknown player";
-    const testerLabel = player?.testerLabel || currentPlayerSummary?.testerLabel || identity?.testerLabel || testerAccessRecord?.testerLabel || "";
-    const playerLabel = player ? `${displayName}${testerLabel ? ` / ${testerLabel}` : ""}` : "Hosted round not entered yet";
-    const raceKey = playerState?.raceKey || playerState?.race || identity?.raceKey || currentPlayerSummary?.raceKey || "human";
-    const raceLabel = raceNameFromKey(raceKey);
-    const land = Number(playerState?.land ?? currentPlayerSummary?.land ?? 0);
-    const power = Number(playerState?.power ?? currentPlayerSummary?.power ?? 0);
-    const money = Number(playerState?.money ?? currentPlayerSummary?.money ?? 0);
-    const currentTick = round?.currentTick ?? roundSummary?.currentTick ?? "-";
-    const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
-    const roundName = round?.roundName || "Shared Multiplayer DEV";
-    const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
-    const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
-    const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
-    const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
-    const dueNowCount = Number(actionSummary?.dueNow ?? 0);
-    const lastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
-    const latestResetAt = proofBoundary?.latestResetAt || roundSummary?.latestResetAt || null;
-    const latestResetEvent = proofBoundary?.latestResetEvent || roundSummary?.latestResetEvent || null;
-    const latestResetLabel = latestResetAt ? new Date(latestResetAt).toLocaleString() : "No proof reset yet";
-    const latestResetEventLabel = latestResetEvent ? `${latestResetEvent.eventType || latestResetEvent.visibility || "Reset event"} · ${latestResetEvent.id ? maskStableIdentifier(latestResetEvent.id) : "unknown"}` : "No reset event yet";
-    const otherPlayerSummary = otherPlayers.length ? otherPlayers.slice(0, 4).map((other) => other.displayName || other.testerLabel || maskStableIdentifier(other.id || "") || "Unknown").join(", ") : "None";
-    return {
-      summary,
-      round,
-      player,
-      playerState,
-      buildings,
-      armies,
-      actionSummary,
-      recentEvents,
-      otherPlayers,
-      roundSummary,
-      proofBoundary,
-      currentPlayerSummary,
-      hostedGrantId,
-      playerId,
-      displayName,
-      testerLabel,
-      playerLabel,
-      raceKey,
-      raceLabel,
-      land,
-      power,
-      money,
-      currentTick,
-      roundKey,
-      roundName,
-      roundStatus,
-      factoryCount,
-      queuedCount,
-      processedCount,
-      dueNowCount,
-      lastFetchLabel,
-      latestResetAt,
-      latestResetEvent,
-      latestResetLabel,
-      latestResetEventLabel,
-      otherPlayerSummary,
-      identity,
-    };
+    return buildHostedShellSnapshot({ hostedRoundState, identitySummary: multiplayerIdentityState.summary, testerAccessRecord });
   }
 
   function renderHostedPageUnavailable(pageKey) {
