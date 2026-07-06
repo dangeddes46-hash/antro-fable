@@ -160,6 +160,10 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const land = Number(playerState?.land ?? currentPlayerSummary?.land ?? 0);
   const power = Number(playerState?.power ?? currentPlayerSummary?.power ?? 0);
   const money = Number(playerState?.money ?? currentPlayerSummary?.money ?? 0);
+  const energy = Number(playerState?.energy ?? 0);
+  const food = Number(playerState?.food ?? 0);
+  const water = Number(playerState?.water ?? 0);
+  const population = Number(playerState?.population ?? 0);
   const currentTick = round?.currentTick ?? roundSummary?.currentTick ?? "-";
   const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
   const roundName = round?.roundName || "Shared Multiplayer DEV";
@@ -198,6 +202,10 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     land,
     power,
     money,
+    energy,
+    food,
+    water,
+    population,
     currentTick,
     roundKey,
     roundName,
