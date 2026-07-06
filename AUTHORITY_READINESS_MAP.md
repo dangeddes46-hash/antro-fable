@@ -84,6 +84,24 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   (transport, request bodies and normalisers are unchanged expressions).
 - UI: no JSX was modified anywhere; all extractions were expression-identical moves.
 
+## 3b. Slice 1 status (Build generalization + Status read-model) — done in this branch
+
+- The hosted Build page now renders all server building rows (`living_area`,
+  `factory`, `barracks`, `bank`, `science_labs` from `buildings.byKey`) with a
+  generalized, grant-routed queue pipeline (`buildingKey` + `amount` in the body).
+- **Deployed-service contract, verified live 2026-07-06:** the v0.43.1 game-service
+  queue endpoint accepts a `buildingKey` payload but records `factory` regardless,
+  accepts requests with NO identity (falls back to "DEV Player One"), and has no
+  generalized queue route (404). `HOSTED_QUEUEABLE_BUILDING_KEYS` in
+  `src/hostedApi.js` therefore gates the client to `factory` only — widening it is a
+  one-line change once the service honours other keys. Server work needed:
+  honour `buildingKey`, reject unknown keys, require identity on queue.
+- Hosted Status surfaces the full server economy read-model (land/power/money/
+  energy/food/water/population) read-only.
+- Server quirk found: after queueing, top-level `queuedCount`/`actionSummary`
+  update but `currentPlayerSummary.queuedCount` lags stale. Client reads the
+  correct (top-level) field.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
