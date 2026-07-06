@@ -13,7 +13,7 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.43.1';
+const SERVICE_VERSION = 'v0.43.2';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -381,7 +381,7 @@ app.post('/api/dev/actions/queue-build-factory', requireDevEndpoints, async (req
         id: result.action.id,
         type: 'dev_queue_build_factory',
         status: result.action.status,
-        buildingKey: 'factory',
+        buildingKey: result.buildingKey || 'factory',
         amount: result.amount,
         requestedTick: result.requestedTick,
         executeAfterTick: result.executeAfterTick,
@@ -499,6 +499,9 @@ app.post('/api/dev/actions/build-factory', requireDevEndpoints, async (req, res)
     }
 
     const actionInput = normalizeDevBuildFactoryInput(req.body || {});
+    if (actionInput.buildingKey !== 'factory') {
+      throw createServiceError(400, 'invalid_building_key', 'The legacy immediate build-factory proof supports buildingKey "factory" only. Use the queued build order endpoint for other building types.');
+    }
     const result = await buildDevFactoryAction(actionInput);
 
     res.status(200).json({
@@ -744,6 +747,7 @@ function normalizeDevBuildFactoryInput(body) {
   const identity = normalizeDevIdentityInput(body);
   return {
     ...identity,
+    buildingKey: normalizeDevBuildingKey(body.buildingKey ?? body.building_key),
     amount: clampDevBuildAmount(body.amount),
     idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
   };
@@ -805,6 +809,37 @@ function clampDevBuildAmount(value) {
   }
 
   return Math.min(10, Math.max(1, parsed));
+}
+
+const DEV_QUEUEABLE_BUILDING_KEYS = ['living_area', 'factory', 'barracks', 'bank', 'science_labs'];
+const DEV_BUILDING_NOUNS = {
+  living_area: ['living area', 'living areas'],
+  factory: ['factory', 'factories'],
+  barracks: ['barracks', 'barracks'],
+  bank: ['bank', 'banks'],
+  science_labs: ['science lab', 'science labs'],
+};
+
+function devBuildingNoun(buildingKey, amount) {
+  const nouns = DEV_BUILDING_NOUNS[buildingKey] || [String(buildingKey).replace(/_/g, ' '), `${String(buildingKey).replace(/_/g, ' ')}s`];
+  return amount === 1 ? nouns[0] : nouns[1];
+}
+
+// A missing buildingKey stays valid and defaults to 'factory' so the pre-existing
+// launcher proof panel (which never sends a buildingKey) keeps working. A PROVIDED
+// key that is not one of the five canonical building types is rejected explicitly
+// rather than silently coerced to factory.
+function normalizeDevBuildingKey(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 'factory';
+  }
+
+  const key = normalizeText(String(value)).toLowerCase();
+  if (!DEV_QUEUEABLE_BUILDING_KEYS.includes(key)) {
+    throw createServiceError(400, 'invalid_building_key', `buildingKey must be one of: ${DEV_QUEUEABLE_BUILDING_KEYS.join(', ')}.`);
+  }
+
+  return key;
 }
 
 function createServiceError(statusCode, code, message) {
@@ -1272,8 +1307,13 @@ async function buildDevFactoryAction(actionInput) {
 }
 
 async function queueDevFactoryAction(actionInput) {
-  const { round, player } = await loadDevRoundPlayerContext(actionInput);
+  // Queued canonical build orders must belong to a grant-linked player. Requests
+  // without an identity are rejected instead of being attributed to the default
+  // DEV proof player.
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
 
+  const buildingKey = actionInput.buildingKey || 'factory';
   const idempotencyKey = actionInput.idempotencyKey || null;
   if (idempotencyKey) {
     const existingAction = await fetchSingleRow(
@@ -1290,6 +1330,7 @@ async function queueDevFactoryAction(actionInput) {
         requestedTick: Number(existingAction.requested_tick ?? round.current_tick ?? 0),
         executeAfterTick: Number(existingAction.execute_after_tick ?? Number(round.current_tick || 0) + 1),
         amount: Number(existingAction.payload?.amount ?? actionInput.amount ?? 1),
+        buildingKey: existingAction.payload?.buildingKey || existingAction.payload?.building_key || 'factory',
         action: formatActionQueue(existingAction),
       };
     }
@@ -1300,7 +1341,7 @@ async function queueDevFactoryAction(actionInput) {
   const executeAfterTick = previousTick + 1;
   const amount = actionInput.amount;
   const actionPayload = {
-    buildingKey: 'factory',
+    buildingKey,
     amount,
   };
   const queuedAt = nowIso();
@@ -1327,11 +1368,11 @@ async function queueDevFactoryAction(actionInput) {
       visibility: 'public',
       actor_player_id: player.id,
       title: 'Build order queued',
-      body: `${player.display_name} queued an order to build ${amount} ${amount === 1 ? 'factory' : 'factories'}.`,
+      body: `${player.display_name} queued an order to build ${amount} ${devBuildingNoun(buildingKey, amount)}.`,
       payload: {
         actionQueueId: actionRow.id,
         actionType: 'dev_queue_build_factory',
-        buildingKey: 'factory',
+        buildingKey,
         amount,
         requestedTick,
         executeAfterTick,
@@ -1350,7 +1391,7 @@ async function queueDevFactoryAction(actionInput) {
         display_name: player.display_name,
         action_queue_id: actionRow.id,
         action_type: 'dev_queue_build_factory',
-        building_key: 'factory',
+        building_key: buildingKey,
         amount,
         requested_tick: requestedTick,
         execute_after_tick: executeAfterTick,
@@ -1372,6 +1413,7 @@ async function queueDevFactoryAction(actionInput) {
     requestedTick,
     executeAfterTick,
     amount,
+    buildingKey,
     action: {
       ...actionRow,
       payload: actionPayload,
@@ -1459,6 +1501,7 @@ async function runManualDevTick(tickInput) {
     const actionNow = nowIso();
     try {
       const actionAmount = clampDevBuildAmount(action.payload?.amount ?? 1);
+      const actionBuildingKey = normalizeDevBuildingKey(action.payload?.buildingKey ?? action.payload?.building_key);
       const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
         query.eq('id', action.player_id)
       );
@@ -1483,14 +1526,14 @@ async function runManualDevTick(tickInput) {
       const buildingRows = await fetchRows(
         'multiplayer_player_buildings',
         'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
-        (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+        (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', actionBuildingKey)
       );
       const oldCount = canonicalCountFromRows(buildingRows);
       const newCount = oldCount + actionAmount;
       const processedAt = nowIso();
       const actionResult = {
         actionType: 'dev_queue_build_factory',
-        buildingKey: 'factory',
+        buildingKey: actionBuildingKey,
         amount: actionAmount,
         oldCount,
         newCount,
@@ -1500,7 +1543,7 @@ async function runManualDevTick(tickInput) {
       await upsertRow('multiplayer_player_buildings', {
         round_id: round.id,
         player_id: player.id,
-        building_key: 'factory',
+        building_key: actionBuildingKey,
         count: newCount,
         effective_count: newCount,
         updated_at: processedAt,
@@ -1520,8 +1563,8 @@ async function runManualDevTick(tickInput) {
         event_type: 'dev_build_factory_processed',
         visibility: 'public',
         actor_player_id: player.id,
-        title: 'Factory order completed',
-        body: `${player.display_name} completed an order for ${actionAmount} ${actionAmount === 1 ? 'factory' : 'factories'}.`,
+        title: `${devBuildingNoun(actionBuildingKey, 1).charAt(0).toUpperCase()}${devBuildingNoun(actionBuildingKey, 1).slice(1)} order completed`,
+        body: `${player.display_name} completed an order for ${actionAmount} ${devBuildingNoun(actionBuildingKey, actionAmount)}.`,
         payload: {
           actionQueueId: action.id,
           ...actionResult,
@@ -1540,7 +1583,7 @@ async function runManualDevTick(tickInput) {
           display_name: player.display_name,
           action_queue_id: action.id,
           action_type: 'dev_queue_build_factory',
-          building_key: 'factory',
+          building_key: actionBuildingKey,
           amount: actionAmount,
           old_count: oldCount,
           new_count: newCount,
@@ -1549,7 +1592,9 @@ async function runManualDevTick(tickInput) {
       });
 
       processedTotal += 1;
-      factoryBuilds += actionAmount;
+      if (actionBuildingKey === 'factory') {
+        factoryBuilds += actionAmount;
+      }
       processedActionIds.push(action.id);
     } catch (error) {
       failedActionIds.push(action.id);
