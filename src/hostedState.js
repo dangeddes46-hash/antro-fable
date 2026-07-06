@@ -6,7 +6,7 @@
 // client-editable display names or tester labels.
 import { races } from "./gameData.js";
 import { cleanSingleLineText } from "./gameMath.js";
-import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY } from "./hostedApi.js";
+import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_BUILDING_ORDER, HOSTED_QUEUEABLE_BUILDING_KEYS, hostedBuildingLabel } from "./hostedApi.js";
 
 function raceNameFromKey(key) { return races[key]?.name || "Human"; }
 
@@ -46,6 +46,30 @@ export function buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord 
     roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
     grantId,
   };
+}
+export function buildQueueBuildOrderBody({ hostedSummary, testerAccessRecord, buildingKey, amount = 1 }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    buildingKey,
+    amount,
+  };
+}
+export function hostedBuildingRows(buildings) {
+  const byKey = buildings && typeof buildings === "object" && buildings.byKey && typeof buildings.byKey === "object" ? buildings.byKey : {};
+  const orderedKeys = [
+    ...HOSTED_BUILDING_ORDER.filter((key) => key in byKey),
+    ...Object.keys(byKey).filter((key) => !HOSTED_BUILDING_ORDER.includes(key)),
+  ];
+  return orderedKeys.map((key) => {
+    const row = byKey[key] || {};
+    return {
+      buildingKey: key,
+      label: hostedBuildingLabel(key),
+      count: Math.max(0, Math.floor(Number(row.count ?? 0))),
+      effectiveCount: Math.max(0, Math.floor(Number(row.effectiveCount ?? row.count ?? 0))),
+      queueable: HOSTED_QUEUEABLE_BUILDING_KEYS.includes(key),
+    };
+  });
 }
 
 export function normaliseHealthSummary(result, responseOk) {
@@ -140,6 +164,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const roundKey = round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
   const roundName = round?.roundName || "Shared Multiplayer DEV";
   const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
+  const buildingRows = hostedBuildingRows(buildings);
   const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
   const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
   const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
@@ -177,6 +202,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     roundKey,
     roundName,
     roundStatus,
+    buildingRows,
     factoryCount,
     queuedCount,
     processedCount,

@@ -16,6 +16,24 @@ export const INVITE_TOKEN_SERVICE_HOST = (() => {
 export const GAME_SERVICE_URL = String(import.meta.env.VITE_GAME_SERVICE_URL || "https://antrophai-game-service-dev.onrender.com").replace(/\/+$/, "");
 export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 
+// Hosted construction contract, verified against the deployed game-service v0.43.1
+// on 2026-07-06: the queue endpoint accepts a buildingKey in the request payload but
+// records buildingKey "factory" regardless of what was requested, and no generalized
+// queue-build route exists (404). Until the service honours other building keys,
+// only "factory" may be queued from the client — sending any other key would
+// silently queue the wrong building server-side.
+export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
+export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs"];
+export const HOSTED_BUILDING_LABELS = {
+  living_area: "Living Area",
+  factory: "Factory",
+  barracks: "Barracks",
+  bank: "Bank",
+  science_labs: "Science Lab",
+};
+export const HOSTED_QUEUEABLE_BUILDING_KEYS = ["factory"];
+export function hostedBuildingLabel(key) { return HOSTED_BUILDING_LABELS[key] || String(key || "").replace(/_/g, " "); }
+
 async function requestJson(url, { method = "GET", headers, body, timeoutMs = 12_000 } = {}) {
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;

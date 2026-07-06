@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUEABLE_BUILDING_KEYS, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -2538,14 +2538,29 @@ export default function App() {
     }
     return summary;
   }
-  async function submitHostedDevQueueBuildFactory() {
+  async function submitHostedDevQueueBuildOrder(buildingKey = "factory") {
+    const buildingLabel = hostedBuildingLabel(buildingKey);
+    if (!HOSTED_QUEUEABLE_BUILDING_KEYS.includes(buildingKey)) {
+      setMultiplayerDevActionState({
+        loading: false,
+        error: `The hosted game service does not accept ${buildingLabel} build orders yet.`,
+        lastActionAt: Date.now(),
+        lastActionType: `hosted_queue_build_${buildingKey}`,
+        lastActionResult: null,
+        lastActionMessage: null,
+      });
+      return;
+    }
     return submitMultiplayerDevAction({
-      endpointPath: "/api/dev/actions/queue-build-factory",
-      actionType: "hosted_queue_build_factory",
-      requestBody: { ...hostedRoundRequestBody(), amount: 1 },
-      successMessage: "Factory build order queued for hosted round.",
+      endpointPath: HOSTED_QUEUE_BUILD_ENDPOINT,
+      actionType: `hosted_queue_build_${buildingKey}`,
+      requestBody: buildQueueBuildOrderBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, buildingKey, amount: 1 }),
+      successMessage: `${buildingLabel} build order queued for hosted round.`,
       onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
+  }
+  async function submitHostedDevQueueBuildFactory() {
+    return submitHostedDevQueueBuildOrder("factory");
   }
   async function submitHostedDevManualTick() {
     return submitMultiplayerDevAction({
@@ -4800,6 +4815,14 @@ export default function App() {
           ["Other players", hosted.otherPlayerSummary],
           ["Last hosted refresh", hosted.lastFetchLabel],
         ]} />
+        <h3 className="mt-4 mb-1 text-orange-300 font-bold">Construction Orders</h3>
+        <p className="mb-2 text-xs text-orange-600">Canonical building counts come from the hosted game-service. Only building types the service currently accepts can be queued from this shell.</p>
+        <OldTable rows={hosted.buildingRows.map((row) => [row.label, <span key={row.buildingKey} className="inline-flex items-center gap-2">
+          <span>{fmt(row.count)}</span>
+          {row.queueable
+            ? <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevQueueBuildOrder(row.buildingKey)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === `hosted_queue_build_${row.buildingKey}` ? `Queuing +1 ${row.label}...` : `Queue +1 ${row.label}`}</button>
+            : <span className="text-orange-700 text-xs">Not yet queueable on the hosted service</span>}
+        </span>])} />
         {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
         {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
         <div className="flex flex-wrap gap-2 mt-4">
