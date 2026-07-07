@@ -817,13 +817,16 @@ function clampDevBuildAmount(value) {
   return Math.min(10, Math.max(1, parsed));
 }
 
-const DEV_QUEUEABLE_BUILDING_KEYS = ['living_area', 'factory', 'barracks', 'bank', 'science_labs'];
+const DEV_QUEUEABLE_BUILDING_KEYS = ['living_area', 'factory', 'barracks', 'bank', 'science_labs', 'nutrition_suppliers', 'water_purifiers', 'power_plants'];
 const DEV_BUILDING_NOUNS = {
   living_area: ['living area', 'living areas'],
   factory: ['factory', 'factories'],
   barracks: ['barracks', 'barracks'],
   bank: ['bank', 'banks'],
   science_labs: ['science lab', 'science labs'],
+  nutrition_suppliers: ['nutrition supplier', 'nutrition suppliers'],
+  water_purifiers: ['water purifier', 'water purifiers'],
+  power_plants: ['power plant', 'power plants'],
 };
 
 function devBuildingNoun(buildingKey, amount) {
@@ -2858,6 +2861,9 @@ function normalizeHostedBuildingSummary(rows = []) {
     barracks: summaryForKey('barracks').count,
     bank: summaryForKey('bank').count,
     scienceLabs: summaryForKey('science_labs').count,
+    nutritionSuppliers: summaryForKey('nutrition_suppliers').count,
+    waterPurifiers: summaryForKey('water_purifiers').count,
+    powerPlants: summaryForKey('power_plants').count,
   };
 
   return {
@@ -2868,6 +2874,9 @@ function normalizeHostedBuildingSummary(rows = []) {
       barracks: summaryForKey('barracks'),
       bank: summaryForKey('bank'),
       science_labs: summaryForKey('science_labs'),
+      nutrition_suppliers: summaryForKey('nutrition_suppliers'),
+      water_purifiers: summaryForKey('water_purifiers'),
+      power_plants: summaryForKey('power_plants'),
     },
     counts,
     livingArea: counts.livingArea,
