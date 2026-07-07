@@ -92,10 +92,24 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
 - **Deployed-service contract, verified live 2026-07-06:** the v0.43.1 game-service
   queue endpoint accepts a `buildingKey` payload but records `factory` regardless,
   accepts requests with NO identity (falls back to "DEV Player One"), and has no
-  generalized queue route (404). `HOSTED_QUEUEABLE_BUILDING_KEYS` in
-  `src/hostedApi.js` therefore gates the client to `factory` only — widening it is a
-  one-line change once the service honours other keys. Server work needed:
-  honour `buildingKey`, reject unknown keys, require identity on queue.
+  generalized queue route (404).
+- **Closed in game-service v0.43.2 (this branch, `game-service/src/server.js`):**
+  the queue endpoint now honours `buildingKey` for all five canonical types
+  end-to-end (queue → tick → per-key building row), rejects provided-but-unknown
+  keys with 400 `invalid_building_key`, and requires a grant identity
+  (400 `identity_not_provided`); a missing `buildingKey` still defaults to factory
+  for the launcher proof panel. The legacy immediate build-factory proof rejects
+  non-factory keys. `HOSTED_QUEUEABLE_BUILDING_KEYS` has been removed from the
+  client; instead the client verifies the `buildingKey` echoed in the queue
+  response, so a stale deployment that coerces to factory surfaces an explicit
+  error. **The DEPLOYED Render instance still runs v0.43.1** — redeploy
+  `game-service/` from this branch (Render service `antrophai-game-service-dev`,
+  root `game-service`; update the tracked branch or merge). `/health` reporting
+  `v0.43.2` confirms the fix is live. Note: `game-service/RENDER_DEPLOYMENT.md`
+  names a stale branch; the live instance matches `dev-player-foundation-v04301`.
+- Pre-existing v0.43.1 crash fixed in passing: the DEV diagnostics toggle on
+  hosted Status/Build threw `renderSharedMultiplayerPreviewPanel is not defined`
+  (panel was defined inside `renderNameSetup`); hoisted to component scope.
 - Hosted Status surfaces the full server economy read-model (land/power/money/
   energy/food/water/population) read-only.
 - Server quirk found: after queueing, top-level `queuedCount`/`actionSummary`
