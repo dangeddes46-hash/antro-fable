@@ -16,12 +16,13 @@ export const INVITE_TOKEN_SERVICE_HOST = (() => {
 export const GAME_SERVICE_URL = String(import.meta.env.VITE_GAME_SERVICE_URL || "https://antrophai-game-service-dev.onrender.com").replace(/\/+$/, "");
 export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 
-// Hosted construction contract, verified against the deployed game-service v0.43.1
-// on 2026-07-06: the queue endpoint accepts a buildingKey in the request payload but
-// records buildingKey "factory" regardless of what was requested, and no generalized
-// queue-build route exists (404). Until the service honours other building keys,
-// only "factory" may be queued from the client — sending any other key would
-// silently queue the wrong building server-side.
+// Hosted construction contract. game-service v0.43.2 (game-service/src/server.js in
+// this repo) honours the requested buildingKey for all five canonical building
+// types, rejects unknown keys with 400 invalid_building_key, and requires a grant
+// identity on queued orders. The client therefore queues any canonical key and
+// additionally verifies the buildingKey echoed back in the queue response, so a
+// stale deployment that still coerces every order to "factory" (v0.43.1 behaviour)
+// is surfaced as an error instead of silently misreported as success.
 export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
 export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs"];
 export const HOSTED_BUILDING_LABELS = {
@@ -31,7 +32,6 @@ export const HOSTED_BUILDING_LABELS = {
   bank: "Bank",
   science_labs: "Science Lab",
 };
-export const HOSTED_QUEUEABLE_BUILDING_KEYS = ["factory"];
 export function hostedBuildingLabel(key) { return HOSTED_BUILDING_LABELS[key] || String(key || "").replace(/_/g, " "); }
 
 async function requestJson(url, { method = "GET", headers, body, timeoutMs = 12_000 } = {}) {
@@ -145,6 +145,7 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "invite_grant_not_found") return "This invite grant was not found in the token ledger. Redeem a fresh valid invite token.";
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
+  if (errorCode === "invalid_building_key") return "The hosted game service rejected that building type.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;
   if (errorCode === "player_not_joined") return `${playerLabel} is not joined to the shared round.`;

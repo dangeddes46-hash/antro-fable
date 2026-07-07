@@ -15,7 +15,7 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUEABLE_BUILDING_KEYS, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
 import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
@@ -2401,7 +2401,7 @@ export default function App() {
 
     return refreshMultiplayerIdentity({ forceResolve: true });
   }
-  async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage, onSuccessRefresh = refreshMultiplayerPreview }) {
+  async function submitMultiplayerDevAction({ endpointPath, actionType, requestBody, successMessage, onSuccessRefresh = refreshMultiplayerPreview, validateResult = null }) {
     if (multiplayerDevActionState.loading) return;
     if (!testerAccessRecord?.accepted) return;
     if (!GAME_SERVICE_URL) {
@@ -2431,6 +2431,19 @@ export default function App() {
           lastActionAt: attemptedAt,
           lastActionType: actionType,
           lastActionResult: null,
+          lastActionMessage: null,
+        });
+        return;
+      }
+
+      const validationError = typeof validateResult === "function" ? validateResult(result) : null;
+      if (validationError) {
+        setMultiplayerDevActionState({
+          loading: false,
+          error: validationError,
+          lastActionAt: attemptedAt,
+          lastActionType: actionType,
+          lastActionResult: result,
           lastActionMessage: null,
         });
         return;
@@ -2540,23 +2553,19 @@ export default function App() {
   }
   async function submitHostedDevQueueBuildOrder(buildingKey = "factory") {
     const buildingLabel = hostedBuildingLabel(buildingKey);
-    if (!HOSTED_QUEUEABLE_BUILDING_KEYS.includes(buildingKey)) {
-      setMultiplayerDevActionState({
-        loading: false,
-        error: `The hosted game service does not accept ${buildingLabel} build orders yet.`,
-        lastActionAt: Date.now(),
-        lastActionType: `hosted_queue_build_${buildingKey}`,
-        lastActionResult: null,
-        lastActionMessage: null,
-      });
-      return;
-    }
     return submitMultiplayerDevAction({
       endpointPath: HOSTED_QUEUE_BUILD_ENDPOINT,
       actionType: `hosted_queue_build_${buildingKey}`,
       requestBody: buildQueueBuildOrderBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, buildingKey, amount: 1 }),
       successMessage: `${buildingLabel} build order queued for hosted round.`,
       onSuccessRefresh: hostedRoundRefreshAfterAction,
+      validateResult: (result) => {
+        const confirmedKey = result?.action?.buildingKey || result?.action?.payload?.buildingKey || null;
+        if (confirmedKey && confirmedKey !== buildingKey) {
+          return `The hosted game service recorded a ${hostedBuildingLabel(confirmedKey)} order instead of ${buildingLabel}. It is likely running an older build that does not honour buildingKey yet - redeploy game-service v0.43.2 before queueing this building type.`;
+        }
+        return null;
+      },
     });
   }
   async function submitHostedDevQueueBuildFactory() {
@@ -4820,12 +4829,10 @@ export default function App() {
           ["Last hosted refresh", hosted.lastFetchLabel],
         ]} />
         <h3 className="mt-4 mb-1 text-orange-300 font-bold">Construction Orders</h3>
-        <p className="mb-2 text-xs text-orange-600">Canonical building counts come from the hosted game-service. Only building types the service currently accepts can be queued from this shell.</p>
+        <p className="mb-2 text-xs text-orange-600">Canonical building counts and queued orders come from the hosted game-service.</p>
         <OldTable rows={hosted.buildingRows.map((row) => [row.label, <span key={row.buildingKey} className="inline-flex items-center gap-2">
           <span>{fmt(row.count)}</span>
-          {row.queueable
-            ? <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevQueueBuildOrder(row.buildingKey)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === `hosted_queue_build_${row.buildingKey}` ? `Queuing +1 ${row.label}...` : `Queue +1 ${row.label}`}</button>
-            : <span className="text-orange-700 text-xs">Not yet queueable on the hosted service</span>}
+          <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevQueueBuildOrder(row.buildingKey)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === `hosted_queue_build_${row.buildingKey}` ? `Queuing +1 ${row.label}...` : `Queue +1 ${row.label}`}</button>
         </span>])} />
         {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
         {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}

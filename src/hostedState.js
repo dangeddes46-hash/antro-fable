@@ -6,7 +6,7 @@
 // client-editable display names or tester labels.
 import { races } from "./gameData.js";
 import { cleanSingleLineText } from "./gameMath.js";
-import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_BUILDING_ORDER, HOSTED_QUEUEABLE_BUILDING_KEYS, hostedBuildingLabel } from "./hostedApi.js";
+import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_BUILDING_ORDER, hostedBuildingLabel } from "./hostedApi.js";
 
 function raceNameFromKey(key) { return races[key]?.name || "Human"; }
 
@@ -67,7 +67,6 @@ export function hostedBuildingRows(buildings) {
       label: hostedBuildingLabel(key),
       count: Math.max(0, Math.floor(Number(row.count ?? 0))),
       effectiveCount: Math.max(0, Math.floor(Number(row.effectiveCount ?? row.count ?? 0))),
-      queueable: HOSTED_QUEUEABLE_BUILDING_KEYS.includes(key),
     };
   });
 }
