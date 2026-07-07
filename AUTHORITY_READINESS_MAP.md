@@ -130,8 +130,11 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   types yet, so their production terms are zero BY DATA on the live schema; the
   engine already computes them and lights up as soon as those building types
   gain hosted rows. Bank interest needs a hosted `banked` balance (none yet).
-  Recommended follow-up slice: add the producer building types to the canonical
-  queueable set (one list server-side + one list client-side).
+  **Follow-up done in this branch:** the producer types are now in the
+  queueable set server- and client-side with reference costs (200/250/7500);
+  production verified nonzero against the reference oracle from a zero state
+  (queue → tick applies builds → economy sees them the same tick). Bank
+  interest remains the only dormant economy term (needs hosted `banked`).
 - Build orders now debit the reference cost at queue time
   (`insufficient_funds` reject; refund on failed insert). New player states
   seed money 1,000,000 (Intro-profile pairing with the hosted 1000 land seed);
