@@ -842,6 +842,138 @@ function normalizeDevBuildingKey(value) {
   return key;
 }
 
+// ── Economy reference port ────────────────────────────────────────────────────
+// Faithful port of the local prototype's per-tick economy formulas:
+//   applyEconomyTickPure, calcCaps, supportedPopulationCap, productionPerTick,
+//   calculateStarvationLoss                                  (src/App.jsx)
+//   scienceLevelBonus(level) = 1 + level * 0.0005            (src/gameMath.js)
+//   power plant energy = TURRET_CONFIG.powerPlantEnergyPerTick (src/gameData.js)
+// The hosted round has no science levels yet, so every scienceLevelBonus term
+// evaluates at level 0 (bonus exactly 1). Server building keys are mapped onto
+// the client building vocabulary; building types with no hosted rows contribute
+// zero BY DATA, not by reinterpretation. Client fields with no hosted
+// counterpart (rebels, banked, protectionHours) evaluate as zero, which makes
+// the bank-interest term zero until a hosted banked balance exists.
+const ECONOMY_SCIENCE_BONUS = 1;
+const ECONOMY_POWER_PLANT_ENERGY_PER_TICK = 50;
+// Starting money mirrors the reference round profile whose startingLand matches
+// the hosted seed (land 1000): roundProfiles["Intro Game"].startingCards =
+// 1,000,000 (src/gameData.js).
+const ECONOMY_STARTING_MONEY = 1000000;
+const ECONOMY_CLIENT_KEY_BY_SERVER_KEY = {
+  living_area: 'living_areas',
+  living_areas: 'living_areas',
+  factory: 'factories',
+  factories: 'factories',
+  barracks: 'barracks',
+  bank: 'banks',
+  banks: 'banks',
+  science_lab: 'science_labs',
+  science_labs: 'science_labs',
+  nutrition_supplier: 'nutrition_suppliers',
+  nutrition_suppliers: 'nutrition_suppliers',
+  water_purifier: 'water_purifiers',
+  water_purifiers: 'water_purifiers',
+  power_plant: 'power_plants',
+  power_plants: 'power_plants',
+  police_station: 'police_stations',
+  police_stations: 'police_stations',
+  mineral_extractor: 'mineral_extractors',
+  mineral_extractors: 'mineral_extractors',
+};
+// Per-building base costs from the reference buildingOrder (src/gameData.js).
+const ECONOMY_BUILDING_COST_BY_CLIENT_KEY = {
+  water_purifiers: 250,
+  mineral_extractors: 200,
+  nutrition_suppliers: 200,
+  missile_bases: 5000,
+  impact_shields: 35000,
+  living_areas: 300,
+  police_stations: 500,
+  factories: 500,
+  blast_shields: 350,
+  science_labs: 600,
+  spy_stations: 1250,
+  barracks: 1000,
+  power_plants: 7500,
+  turrets: 12500,
+  star_wars: 5000,
+  banks: 1250,
+};
+
+function economyBuildingCounts(buildingRows = []) {
+  const counts = {};
+  for (const row of buildingRows) {
+    const clientKey = ECONOMY_CLIENT_KEY_BY_SERVER_KEY[row.building_key];
+    if (!clientKey) continue;
+    counts[clientKey] = (counts[clientKey] || 0) + Math.max(0, Math.floor(Number(row.effective_count ?? row.count ?? 0)));
+  }
+  return counts;
+}
+function economyCalcCaps(b = {}) {
+  return {
+    maxPop: (b.living_areas || 0) * 150 * ECONOMY_SCIENCE_BONUS,
+    maxFed: (b.nutrition_suppliers || 0) * 250 * ECONOMY_SCIENCE_BONUS,
+    maxWatered: (b.water_purifiers || 0) * 400 * ECONOMY_SCIENCE_BONUS,
+    maxPoliced: (b.police_stations || 0) * 1000 * ECONOMY_SCIENCE_BONUS,
+    bankCap: (b.banks || 0) * 250000 * ECONOMY_SCIENCE_BONUS,
+  };
+}
+function economySupportedPopulationCap(c = {}) {
+  return Math.max(0, Math.min(Number(c.maxPop || 0), Number(c.maxFed || 0), Number(c.maxWatered || 0)));
+}
+function economyProductionPerTick(b = {}) {
+  return {
+    food: (b.nutrition_suppliers || 0) * 5 * ECONOMY_SCIENCE_BONUS,
+    water: (b.water_purifiers || 0) * 8 * ECONOMY_SCIENCE_BONUS,
+    energy: (b.power_plants || 0) * ECONOMY_POWER_PLANT_ENERGY_PER_TICK,
+  };
+}
+function economyStarvationLoss({ pop = 0, supportCap = 0, rawFood = 0, rawWater = 0, consumption = 0, tickEquivalent = 1 }) {
+  const currentPop = Math.max(0, Number(pop) || 0);
+  if (currentPop <= 0) return 0;
+  const ticks = Math.max(0, Number(tickEquivalent) || 0);
+  const excess = Math.max(0, currentPop - Math.max(0, Number(supportCap) || 0));
+  const supportAttrition = excess * Math.min(1, 0.10 * ticks);
+  const denom = Math.max(1, Math.abs(Number(consumption) || 0));
+  const foodShortage = rawFood < 0 ? Math.min(1, Math.abs(rawFood) / denom) : 0;
+  const waterShortage = rawWater < 0 ? Math.min(1, Math.abs(rawWater) / denom) : 0;
+  const shortageSeverity = Math.max(foodShortage, waterShortage);
+  const stockpileAttrition = currentPop * shortageSeverity * Math.min(0.25, 0.05 * ticks);
+  return Math.min(currentPop, Math.floor(supportAttrition + stockpileAttrition));
+}
+function computeEconomyTick(stateRow, buildingRows = [], armyRows = []) {
+  const b = economyBuildingCounts(buildingRows);
+  const c = economyCalcCaps(b);
+  const supportCap = economySupportedPopulationCap(c);
+  const p = economyProductionPerTick(b);
+  const armyUnits = (armyRows || []).reduce((sum, row) => sum + Math.max(0, Math.floor(Number(row.count || 0))), 0);
+  const currentPop = Math.max(0, Number(stateRow.population || 0));
+  const popGain = Math.floor(Math.max(0, supportCap - currentPop - 0) * 0.015 * ECONOMY_SCIENCE_BONUS);
+  const consumption = Math.floor((currentPop + 0 + armyUnits) * 0.02);
+  const rawFood = Number(stateRow.food || 0) + p.food - consumption;
+  const rawWater = Number(stateRow.water || 0) + p.water - consumption;
+  let nextPop = currentPop + popGain;
+  const starvationLoss = economyStarvationLoss({ pop: nextPop, supportCap, rawFood, rawWater, consumption, tickEquivalent: 1 });
+  nextPop = Math.max(0, nextPop - starvationLoss);
+  return {
+    population: nextPop,
+    money: Number(stateRow.money || 0) + currentPop * 2 * ECONOMY_SCIENCE_BONUS,
+    food: Math.max(0, rawFood),
+    water: Math.max(0, rawWater),
+    energy: Math.max(0, Number(stateRow.energy || 0) + p.energy),
+    starvationLoss,
+  };
+}
+function devBuildingCost(buildingKey, amount) {
+  const clientKey = ECONOMY_CLIENT_KEY_BY_SERVER_KEY[buildingKey] || buildingKey;
+  const unitCost = ECONOMY_BUILDING_COST_BY_CLIENT_KEY[clientKey];
+  if (!Number.isFinite(unitCost)) {
+    throw createServiceError(400, 'invalid_building_key', `No reference cost exists for buildingKey "${buildingKey}".`);
+  }
+  return unitCost * Math.max(1, Math.floor(Number(amount) || 1));
+}
+
 function createServiceError(statusCode, code, message) {
   return Object.assign(new Error(message), { statusCode, code });
 }
@@ -1622,6 +1754,11 @@ async function runManualDevTick(tickInput) {
     }
   }
 
+  // Economy runs after queued-action processing so completed builds are counted
+  // before production, matching the client ordering (order completion is applied
+  // before elapsed production in the local prototype's page update).
+  const economy = await applyEconomyTickForRound(round, nextTick);
+
   const completedAt = nowIso();
   await updateSingleRow('multiplayer_rounds', {
     current_tick: nextTick,
@@ -1636,6 +1773,7 @@ async function runManualDevTick(tickInput) {
     failedTotal: failedActionIds.length,
     processedActionIds,
     failedActionIds,
+    economyPlayersProcessed: economy.playersProcessed,
   };
 
   await updateSingleRow('multiplayer_tick_log', {
@@ -1668,7 +1806,54 @@ async function runManualDevTick(tickInput) {
       total: processedTotal,
       factoryBuilds,
     },
+    economy: {
+      playersProcessed: economy.playersProcessed,
+    },
   };
+}
+
+async function applyEconomyTickForRound(round, nextTick) {
+  const activePlayerRounds = await fetchRows(
+    'multiplayer_player_rounds',
+    'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('status', 'active').order('created_at', { ascending: true })
+  );
+
+  let playersProcessed = 0;
+  for (const playerRound of activePlayerRounds) {
+    const stateRow = await fetchSingleRow(
+      'multiplayer_player_state',
+      'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
+    );
+    if (!stateRow) continue;
+
+    const buildingRows = await fetchRows(
+      'multiplayer_player_buildings',
+      'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
+    );
+    const armyRows = await fetchRows(
+      'multiplayer_player_armies',
+      'id, player_id, round_id, unit_key, count, training_count, returning_count',
+      (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
+    );
+
+    const next = computeEconomyTick(stateRow, buildingRows, armyRows);
+    await updateSingleRow('multiplayer_player_state', {
+      population: next.population,
+      money: next.money,
+      food: next.food,
+      water: next.water,
+      energy: next.energy,
+      tick: nextTick,
+      state_version: Number(stateRow.state_version || 0) + 1,
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', stateRow.id));
+    playersProcessed += 1;
+  }
+
+  return { playersProcessed };
 }
 
 async function resetDevProofRound(resetInput) {
@@ -1698,14 +1883,37 @@ async function resetDevProofRound(resetInput) {
     );
     const previousFactoryCount = Math.max(0, Math.floor(Number(factoryRow?.effective_count ?? factoryRow?.count ?? 0)));
     previousFactoryCounts.set(currentPlayer.id, previousFactoryCount);
-    await upsertRow('multiplayer_player_buildings', {
-      round_id: round.id,
-      player_id: currentPlayer.id,
-      building_key: 'factory',
-      count: 0,
-      effective_count: 0,
-      updated_at: resetAt,
-    }, 'player_id,round_id,building_key');
+    // Post-generalization, the proof reset zeroes every canonical building type,
+    // not just factories, and re-seeds the player economy state to its
+    // reference starting values.
+    for (const buildingKey of DEV_QUEUEABLE_BUILDING_KEYS) {
+      await upsertRow('multiplayer_player_buildings', {
+        round_id: round.id,
+        player_id: currentPlayer.id,
+        building_key: buildingKey,
+        count: 0,
+        effective_count: 0,
+        updated_at: resetAt,
+      }, 'player_id,round_id,building_key');
+    }
+
+    const stateRow = await fetchSingleRow(
+      'multiplayer_player_state',
+      'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', currentPlayer.id)
+    );
+    if (stateRow) {
+      await updateSingleRow('multiplayer_player_state', {
+        money: ECONOMY_STARTING_MONEY,
+        population: 0,
+        food: 0,
+        water: 0,
+        energy: 0,
+        tick: 0,
+        state_version: Number(stateRow.state_version || 0) + 1,
+        updated_at: resetAt,
+      }, (query) => query.eq('id', stateRow.id));
+    }
   }
 
   const queuedActions = await fetchRows(
@@ -2306,7 +2514,7 @@ async function getOrCreatePlayerState(roundId, playerId) {
     race_key: 'human',
     land: 1000,
     power: 0,
-    money: 0,
+    money: ECONOMY_STARTING_MONEY,
     energy: 0,
     food: 0,
     water: 0,
