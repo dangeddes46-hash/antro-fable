@@ -383,6 +383,7 @@ app.post('/api/dev/actions/queue-build-factory', requireDevEndpoints, async (req
         status: result.action.status,
         buildingKey: result.buildingKey || 'factory',
         amount: result.amount,
+        cost: result.cost ?? result.action.payload?.cost ?? null,
         requestedTick: result.requestedTick,
         executeAfterTick: result.executeAfterTick,
         payload: result.action.payload,
@@ -1472,25 +1473,62 @@ async function queueDevFactoryAction(actionInput) {
   const requestedTick = previousTick;
   const executeAfterTick = previousTick + 1;
   const amount = actionInput.amount;
+
+  // Build orders debit the reference building cost at queue time, mirroring the
+  // local prototype, which charges Cardisium when construction starts.
+  const cost = devBuildingCost(buildingKey, amount);
+  const stateResult = await getOrCreatePlayerState(round.id, player.id);
+  const stateRow = stateResult.row;
+  const availableMoney = Number(stateRow.money || 0);
+  if (availableMoney < cost) {
+    throw createServiceError(400, 'insufficient_funds', `Not enough money for that build order: it costs ${cost} and ${availableMoney} is available.`);
+  }
+  const debitedAt = nowIso();
+  await updateSingleRow('multiplayer_player_state', {
+    money: availableMoney - cost,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: debitedAt,
+  }, (query) => query.eq('id', stateRow.id));
+  const refundDebit = async () => {
+    const freshState = await fetchSingleRow(
+      'multiplayer_player_state',
+      'id, player_id, round_id, state_version, money, created_at, updated_at',
+      (query) => query.eq('id', stateRow.id)
+    ).catch(() => null);
+    if (!freshState) return;
+    await updateSingleRow('multiplayer_player_state', {
+      money: Number(freshState.money || 0) + cost,
+      state_version: Number(freshState.state_version || 0) + 1,
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', stateRow.id)).catch(() => {});
+  };
+
   const actionPayload = {
     buildingKey,
     amount,
+    cost,
   };
   const queuedAt = nowIso();
-  const actionRow = await insertSingleRow('multiplayer_action_queue', {
-    round_id: round.id,
-    player_id: player.id,
-    action_type: 'dev_queue_build_factory',
-    status: 'queued',
-    requested_tick: requestedTick,
-    execute_after_tick: executeAfterTick,
-    payload: actionPayload,
-    result: null,
-    error_message: null,
-    idempotency_key: idempotencyKey,
-    processed_at: null,
-    updated_at: queuedAt,
-  });
+  let actionRow;
+  try {
+    actionRow = await insertSingleRow('multiplayer_action_queue', {
+      round_id: round.id,
+      player_id: player.id,
+      action_type: 'dev_queue_build_factory',
+      status: 'queued',
+      requested_tick: requestedTick,
+      execute_after_tick: executeAfterTick,
+      payload: actionPayload,
+      result: null,
+      error_message: null,
+      idempotency_key: idempotencyKey,
+      processed_at: null,
+      updated_at: queuedAt,
+    });
+  } catch (error) {
+    await refundDebit();
+    throw error;
+  }
 
   try {
     await insertSingleRow('multiplayer_round_events', {
@@ -1525,6 +1563,7 @@ async function queueDevFactoryAction(actionInput) {
         action_type: 'dev_queue_build_factory',
         building_key: buildingKey,
         amount,
+        cost,
         requested_tick: requestedTick,
         execute_after_tick: executeAfterTick,
       },
@@ -1535,6 +1574,7 @@ async function queueDevFactoryAction(actionInput) {
       error_message: error instanceof Error ? error.message : 'Unexpected queue-build-factory failure.',
       updated_at: nowIso(),
     }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    await refundDebit();
     throw error;
   }
 
@@ -1546,6 +1586,7 @@ async function queueDevFactoryAction(actionInput) {
     executeAfterTick,
     amount,
     buildingKey,
+    cost,
     action: {
       ...actionRow,
       payload: actionPayload,
