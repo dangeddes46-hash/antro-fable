@@ -2614,10 +2614,12 @@ async function getOrCreatePlayerArmies(roundId, playerId) {
     query.eq('round_id', roundId).eq('player_id', playerId)
   );
   const existingKeys = new Set(existing.map((row) => row.unit_key));
-  const created = expectedRows.some((row) => !existingKeys.has(row.unit_key));
+  // Only create rows that are missing. Upserting the full expected set here
+  // overwrote existing army counts with zero on every hosted entry.
+  const missingRows = expectedRows.filter((row) => !existingKeys.has(row.unit_key));
 
   await Promise.all(
-    expectedRows.map((row) =>
+    missingRows.map((row) =>
       upsertRow('multiplayer_player_armies', {
         round_id: roundId,
         player_id: playerId,
@@ -2630,7 +2632,7 @@ async function getOrCreatePlayerArmies(roundId, playerId) {
   );
 
   return {
-    created,
+    created: missingRows.length > 0,
   };
 }
 
