@@ -24,13 +24,16 @@ export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 // stale deployment that still coerces every order to "factory" (v0.43.1 behaviour)
 // is surfaced as an error instead of silently misreported as success.
 export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
-export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs"];
+export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs", "nutrition_suppliers", "water_purifiers", "power_plants"];
 export const HOSTED_BUILDING_LABELS = {
   living_area: "Living Area",
   factory: "Factory",
   barracks: "Barracks",
   bank: "Bank",
   science_labs: "Science Lab",
+  nutrition_suppliers: "Nutrition Supplier",
+  water_purifiers: "Water Purifier",
+  power_plants: "Power Plant",
 };
 export function hostedBuildingLabel(key) { return HOSTED_BUILDING_LABELS[key] || String(key || "").replace(/_/g, " "); }
 
