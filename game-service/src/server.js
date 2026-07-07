@@ -421,6 +421,9 @@ app.post('/api/dev/tick/manual-run', requireDevEndpoints, async (req, res) => {
     }
 
     const tickInput = normalizeDevManualTickInput(req.body || {});
+    // Manual DEV ticks must come from a grant-linked identity; identityless
+    // requests are rejected rather than run anonymously.
+    await resolveDevPlayerIdentity(tickInput, { requireGrant: true });
     const result = await runManualDevTick(tickInput);
 
     res.status(200).json({
@@ -755,7 +758,9 @@ function normalizeDevBuildFactoryInput(body) {
 }
 
 function normalizeDevManualTickInput(body) {
+  const identity = normalizeDevIdentityInput(body);
   return {
+    ...identity,
     roundKey: normalizeText(body.roundKey || DEV_ROUND_DEFAULTS.roundKey),
   };
 }
@@ -1898,7 +1903,10 @@ async function applyEconomyTickForRound(round, nextTick) {
 }
 
 async function resetDevProofRound(resetInput) {
-  const { round, player } = await loadDevRoundPlayerContext(resetInput);
+  // Proof resets affect every active player in the round, so they must come
+  // from a grant-linked identity; identityless requests are rejected.
+  const identity = await resolveDevPlayerIdentity(resetInput, { requireGrant: true });
+  const { round, player } = identity;
   const resetAt = nowIso();
   const previousTick = Number(round.current_tick || 0);
   const activePlayerRounds = await fetchRows(

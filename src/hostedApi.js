@@ -146,6 +146,7 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
   if (errorCode === "invalid_building_key") return "The hosted game service rejected that building type.";
+  if (errorCode === "insufficient_funds") return "Not enough money for that build order.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;
   if (errorCode === "player_not_joined") return `${playerLabel} is not joined to the shared round.`;

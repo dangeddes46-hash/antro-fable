@@ -2512,9 +2512,7 @@ export default function App() {
     return submitMultiplayerDevAction({
       endpointPath: "/api/dev/tick/manual-run",
       actionType: "dev_manual_tick",
-      requestBody: {
-        roundKey: MULTIPLAYER_PREVIEW_ROUND_KEY,
-      },
+      requestBody: multiplayerIdentityRequestBody(),
       successMessage: "Manual tick processed.",
       onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
