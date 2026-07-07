@@ -116,6 +116,37 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   update but `currentPlayerSummary.queuedCount` lags stale. Client reads the
   correct (top-level) field.
 
+## 3c. Slice 2 status (economy tick + build costs) — done in this branch
+
+- game-service v0.43.2 now runs a faithful port of the reference per-tick
+  economy (`applyEconomyTickPure` and helpers from `src/App.jsx` /
+  `src/gameMath.js` / `src/gameData.js`) for every active player inside the
+  manual tick, after action processing. Fidelity verified against the verbatim
+  reference formulas over 3 tick cycles on seeded nonzero state (population,
+  money, food, water, energy all exact).
+- Scope honesty: of the five canonical hosted buildings, only living areas and
+  banks appear in the reference economy at all. The producers
+  (nutrition_suppliers, water_purifiers, power_plants) are not hosted building
+  types yet, so their production terms are zero BY DATA on the live schema; the
+  engine already computes them and lights up as soon as those building types
+  gain hosted rows. Bank interest needs a hosted `banked` balance (none yet).
+  Recommended follow-up slice: add the producer building types to the canonical
+  queueable set (one list server-side + one list client-side).
+- Build orders now debit the reference cost at queue time
+  (`insufficient_funds` reject; refund on failed insert). New player states
+  seed money 1,000,000 (Intro-profile pairing with the hosted 1000 land seed);
+  proof reset re-seeds economy state and zeroes all five building types.
+- Manual tick and proof reset now require a grant identity (same pattern as
+  queue). The launcher tick button sends the identity body.
+- Second pre-existing bug fixed: `getOrCreatePlayerArmies` upserted count 0
+  over BOTH army rows on every hosted entry, wiping army counts (dormant while
+  armies were all zero; exposed by the consumption term).
+- `roundSummary.queuedCount` staleness (observed once against the deployed
+  instance) was NOT fixed: `currentPlayerSummary` is overwritten with fresh
+  counts server-side, so the earlier attribution to it was wrong; the stale
+  zero likely came from the round-wide canonical-rows filter. Needs a dedicated
+  look; the client reads the correct top-level field either way.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
