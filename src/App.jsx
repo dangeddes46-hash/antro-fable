@@ -4761,6 +4761,284 @@ export default function App() {
     </Panel>;
   }
 
+  const renderSharedMultiplayerPreviewPanel = () => {
+    const summary = multiplayerPreviewState.summary || null;
+    const round = summary?.round || null;
+    const health = multiplayerHealthState.summary || null;
+    const players = Array.isArray(summary?.players) ? summary.players : [];
+    const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
+    const recentPublicEvents = Array.isArray(summary?.recentPublicEvents) ? summary.recentPublicEvents : recentEvents;
+    const recentActions = Array.isArray(summary?.recentActions) ? summary.recentActions : [];
+    const recentTickLogs = Array.isArray(summary?.recentTickLogs) ? summary.recentTickLogs : [];
+    const actionSummary = summary?.actionSummary || null;
+    const roundSummary = summary?.roundSummary || null;
+    const proofBoundary = summary?.proofBoundary || null;
+    const hostedSummary = hostedRoundState.summary || null;
+    const hostedRound = hostedSummary?.round || null;
+    const hostedPlayer = hostedSummary?.player || null;
+    const hostedPlayerState = hostedSummary?.playerState || null;
+    const hostedBuildings = hostedSummary?.buildings || null;
+    const hostedArmies = hostedSummary?.armies || null;
+    const hostedActionSummary = hostedSummary?.actionSummary || null;
+    const hostedOtherPlayers = Array.isArray(hostedSummary?.otherPlayers) ? hostedSummary.otherPlayers : [];
+    const hostedRoundSummary = hostedSummary?.roundSummary || null;
+    const previewBusy = multiplayerPreviewState.loading;
+    const roundKey = roundSummary?.roundKey || round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+    const roundName = roundSummary?.roundName || round?.roundName || "Shared Multiplayer DEV";
+    const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
+    const currentTick = roundSummary?.currentTick ?? round?.currentTick ?? "-";
+    const lastPreviewFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not refreshed yet";
+    const lastHealthFetchLabel = multiplayerHealthState.fetchedAt ? new Date(multiplayerHealthState.fetchedAt).toLocaleString() : "Not refreshed yet";
+    const identitySummary = multiplayerIdentityState.summary || (testerAccessRecord?.accepted && testerAccessRecord?.accessMode !== "invite-token" ? multiplayerIdentityFallbackSummary() : null);
+    const accessGrant = testerAccessRecord?.accessGrant || null;
+    const canEnterHostedDevRound = Boolean(testerAccessRecord?.accepted && testerAccessRecord?.accessMode === "invite-token" && (accessGrant?.grantId || accessGrant?.currentGrantId));
+    const hostedGrantId = hostedSummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
+    const hostedPlayerLabel = hostedPlayer ? `${hostedPlayer.displayName}${hostedPlayer.testerLabel ? ` / ${hostedPlayer.testerLabel}` : ""}` : (canEnterHostedDevRound ? "Hosted round not entered yet" : "Redeem a real invite token");
+    const hostedRoundKey = hostedRound?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
+    const hostedRoundName = hostedRound?.roundName || "Shared Multiplayer DEV";
+    const hostedCurrentTick = hostedRound?.currentTick ?? hostedRoundSummary?.currentTick ?? "-";
+    const hostedLastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
+    const hostedFactoryCount = Number(hostedSummary?.factoryCount ?? hostedBuildings?.factories ?? hostedBuildings?.counts?.factory ?? hostedSummary?.currentPlayerSummary?.factoryCount ?? 0);
+    const hostedQueuedCount = Number(hostedSummary?.queuedCount ?? hostedActionSummary?.queued ?? hostedSummary?.currentPlayerSummary?.queuedCount ?? 0);
+    const hostedProcessedCount = Number(hostedSummary?.processedCount ?? hostedActionSummary?.processed ?? hostedSummary?.currentPlayerSummary?.processedCount ?? 0);
+    const hostedDueNowCount = Number(hostedActionSummary?.dueNow ?? 0);
+    const grantId = identitySummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
+    const testerLabel = identitySummary?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "";
+    const displayName = identitySummary?.displayName || (multiplayerIdentityState.loading ? "Resolving multiplayer identity..." : testerAccessRecord?.accessMode === "invite-token" ? "Invite grant pending resolution" : "DEV Invite Tester");
+    const resolvedFrom = identitySummary?.resolvedFrom || (testerAccessRecord?.accessMode === "invite-token" ? "invite grant pending" : "development fallback");
+    const identityResolved = Boolean(identitySummary?.currentPlayerId || identitySummary?.playerId);
+    const playerId = identitySummary?.currentPlayerId || identitySummary?.playerId || "";
+    const playerRoundId = identitySummary?.playerRoundId || "";
+    const currentIdentityLabel = identityResolved ? displayName : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting invite-token identity resolution" : displayName;
+    const identityGuardLabel = identityResolved
+      ? (identitySummary?.requestedDisplayNameIgnored || identitySummary?.requestedTesterLabelIgnored ? "Requested labels ignored" : "No override detected")
+      : "Not resolved yet";
+    const totalPlayerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
+    const canonicalPlayerCount = Number(roundSummary?.canonicalPlayerCount ?? 0);
+    const playerCountLabel = canonicalPlayerCount > 0 ? "Canonical players" : "Players";
+    const playerCount = canonicalPlayerCount > 0 ? canonicalPlayerCount : totalPlayerCount;
+    const legacyPlayerCount = canonicalPlayerCount > 0 ? Number(roundSummary?.legacyPlayerCount ?? Math.max(0, totalPlayerCount - canonicalPlayerCount)) : 0;
+    const factoryCount = Number(roundSummary?.factoryCount ?? 0);
+    const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
+    const processedCount = Number(roundSummary?.processedCount ?? actionSummary?.processed ?? 0);
+    const dueNowCount = Number(actionSummary?.dueNow ?? 0);
+    const latestResetAt = proofBoundary?.latestResetAt || roundSummary?.latestResetAt || null;
+    const latestResetEvent = proofBoundary?.latestResetEvent || roundSummary?.latestResetEvent || null;
+    const latestResetLabel = latestResetAt ? new Date(latestResetAt).toLocaleString() : "No proof reset yet";
+    const latestResetEventLabel = latestResetEvent ? `${latestResetEvent.eventType || latestResetEvent.visibility || "Reset event"} · ${latestResetEvent.id ? maskStableIdentifier(latestResetEvent.id) : "unknown"}` : "No reset event yet";
+    const playerSummary = (player = {}) => {
+      const state = player.state || {};
+      return {
+        title: player.displayName || "Unknown player",
+        testerLabel: player.testerLabel || "",
+        playerId: player.id ? maskStableIdentifier(player.id) : "",
+        playerRoundId: player.playerRoundId ? maskStableIdentifier(player.playerRoundId) : "",
+        grantId: player.grantId ? maskStableIdentifier(player.grantId) : "",
+        accessLinkId: player.accessLinkId ? maskStableIdentifier(player.accessLinkId) : "",
+        identityScope: player.identityScope || (player.isGrantLinked ? "canonical" : "diagnostic"),
+        isGrantLinked: Boolean(player.isGrantLinked),
+        raceLabel: raceNameFromKey(state.raceKey || ""),
+        tick: state.tick ?? "—",
+        stateVersion: state.stateVersion ?? "—",
+        land: fmt(Number(state.land || 0)),
+        power: compactFmt(Number(state.power || 0)),
+        money: compactFmt(Number(state.money || 0)),
+        factoryCount: fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0)))),
+        queuedCount: fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0)))),
+        processedCount: fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0)))),
+      };
+    };
+    const renderStatusCard = (title, rows, note = null) => <div className="border border-orange-950 bg-black/50 p-3">
+      <div className="text-sm font-bold text-orange-200 mb-2">{title}</div>
+      <OldTable rows={rows} />
+      {note ? <div className="text-xs text-orange-600 mt-2">{note}</div> : null}
+    </div>;
+    return <>
+      <Panel title="Browser-Driven Multiplayer Proof">
+      <p className="text-orange-200 mb-3">This diagnostic proof stays browser-driven and local to your tester access. Resolve the invite grant, queue +1 factory, run a manual DEV tick, and confirm the updated factory count. The hosted round view below is the player-facing entry path; this panel remains for testing and troubleshooting.</p>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        {canEnterHostedDevRound ? <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Entering Hosted DEV Round..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button> : <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Redeem a real invite token before entering a hosted round.</span>}
+        <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerHealth} disabled={multiplayerHealthState.loading || multiplayerPreviewState.loading}>{multiplayerHealthState.loading ? "Refreshing service health..." : "Refresh service health"}</button>
+        <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading || multiplayerDevActionState.loading}>{multiplayerPreviewState.loading ? "Refreshing round summary..." : "Refresh round summary"}</button>
+        <button className="classic-btn antro-action-btn" onClick={resolveMyMultiplayerIdentity} disabled={multiplayerIdentityState.loading || multiplayerDevActionState.loading}>{multiplayerIdentityState.loading ? "Resolving identity..." : identityResolved ? "Re-resolve identity" : "Resolve my multiplayer identity"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading || !identityResolved}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevResetProofRound} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? "Resetting proof window..." : "Reset proof cleanly"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_build_factory" ? "Running legacy proof..." : "Legacy immediate proof: build +1 factory"}</button>
+        <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Server-authorised proof</span>
+        <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{GAME_SERVICE_URL || "Game service unavailable"}</span>
+      </div>
+      <div className="grid lg:grid-cols-2 gap-3">
+        {renderStatusCard("Access Status", [
+          ["Access mode", testerAccessModeLabel(testerAccessRecord)],
+          ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
+          ["Tester label", testerLabel || "—"],
+          ["Current browser identity", currentIdentityLabel],
+          ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
+          ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
+          ["Access source", testerAccessRecord?.accessMode === "invite-token" ? "Invite-token gate" : "Development fallback"],
+        ], "Tester access remains browser-local and separate from the save data.")}
+        {renderStatusCard("Service Health", [
+          ["Reachable", health ? (health.reachable ? "Yes" : "No") : "Unknown"],
+          ["Service", health?.service || "Not loaded"],
+          ["Version", health?.version || "—"],
+          ["Environment", health?.environment || "—"],
+          ["Supabase configured", health?.supabaseConfigured === true ? "Yes" : health?.supabaseConfigured === false ? "No" : "Unknown"],
+          ["DB reachable", health?.dbReachable === true ? "Yes" : health?.dbReachable === false ? "No" : "Unknown"],
+          ["Invite ledger", health?.inviteLedgerReachable === true ? "Yes" : health?.inviteLedgerReachable === false ? "No" : "Unknown"],
+          ["DEV endpoints", health?.devEndpointsEnabled === true ? "Enabled" : health?.devEndpointsEnabled === false ? "Disabled" : "Unknown"],
+          ["Allowed origins", Number.isFinite(Number(health?.allowedOriginsCount)) ? fmt(Number(health.allowedOriginsCount)) : "—"],
+          ["Last refreshed", lastHealthFetchLabel],
+        ], "This health check only reports service readiness and never exposes secrets.")}          
+        {renderStatusCard("Identity Status", [
+          ["Resolved state", identityResolved ? "Resolved" : multiplayerIdentityState.loading ? "Resolving..." : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting resolve" : "Fallback ready"],
+          ["Current browser identity", currentIdentityLabel],
+          ["Tester label", testerLabel || "—"],
+          ["Resolved from", resolvedFrom],
+          ["Impersonation guard", identityGuardLabel],
+          ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
+          ["Player id", playerId ? maskStableIdentifier(playerId) : "—"],
+          ["Player round id", playerRoundId ? maskStableIdentifier(playerRoundId) : "—"],
+          ["Round key", roundKey],
+          ["Round name", roundName],
+          ["Current tick", currentTick],
+          ["Last refreshed", multiplayerIdentityState.fetchedAt ? new Date(multiplayerIdentityState.fetchedAt).toLocaleString() : "Not refreshed yet"],
+        ], "Resolve identity before queueing a factory order so the selected grant is linked to the right player.")}
+        {renderStatusCard("Round Proof Summary", [
+          ["Round status", roundStatus],
+          [playerCountLabel, fmt(playerCount)],
+          ...(legacyPlayerCount > 0 ? [["Legacy players", fmt(legacyPlayerCount)]] : []),
+          ["Factory count", fmt(Math.max(0, Math.floor(factoryCount)))],
+          ["Queued rows", fmt(queuedCount)],
+          ["Processed rows", fmt(processedCount)],
+          ["Due now", fmt(dueNowCount)],
+          ["Latest reset at", latestResetLabel],
+          ["Latest reset event", latestResetEventLabel],
+          ["Recent public events", fmt(recentPublicEvents.length)],
+          ["Recent actions", fmt(recentActions.length)],
+          ["Recent tick logs", fmt(recentTickLogs.length)],
+          ["Last round refresh", lastPreviewFetchLabel],
+        ], "The lists below are trimmed to the latest DEV proof boundary.")}          
+      </div>
+      {previewBusy ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer proof data...</div> : null}
+      {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
+      {multiplayerIdentityState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerIdentityState.error}</div> : null}
+      {multiplayerIdentityState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerIdentityState.message}</div> : null}
+      {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
+      {multiplayerDevActionState.lastActionMessage ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerDevActionState.lastActionMessage}</div> : null}
+      {!previewBusy && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
+      {players.length ? <div className="mt-3 grid gap-2">
+        {players.map((player) => {
+          const details = playerSummary(player);
+          const isCurrentPlayer = identityResolved && player.id === playerId;
+          return <div key={player.id} className={`border p-2 ${isCurrentPlayer ? "border-cyan-300 bg-cyan-950/15" : "border-orange-950 bg-black/50"}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-orange-200">{details.title}</span>
+              {isCurrentPlayer ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">You</span> : null}
+              {details.identityScope === "canonical" ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">Canonical</span> : details.identityScope === "legacy" ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Legacy</span> : <span className="text-[10px] uppercase tracking-wide border border-orange-800 bg-black/50 text-orange-500 px-2 py-0.5">Diagnostic</span>}
+              {details.testerLabel ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{details.testerLabel}</span> : null}
+              {details.playerId ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Player {details.playerId}</span> : null}
+            </div>
+            <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
+            <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
+            <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount} · Queued: {details.queuedCount} · Processed: {details.processedCount}{isCurrentPlayer ? " · Current browser identity" : ""}</div>
+          </div>;
+        })}
+      </div> : null}
+      <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent actions</div>
+      {recentActions.length ? <div className="mt-2 grid gap-2">
+        {recentActions.map((action) => {
+          const result = action.resultSummary || null;
+          return <div key={action.id} className="border border-orange-950 bg-black/50 p-2">
+            <div className="text-[10px] uppercase tracking-wide text-orange-600">Request tick {action.requestedTick ?? "—"} · Execute after {action.executeAfterTick ?? "—"} · {action.status || "unknown"}</div>
+            <div className="font-bold text-orange-200 mt-1">{action.actionType || "Action"}</div>
+            {result ? <div className="text-xs text-orange-200 mt-1">Factory: {result.oldCount ?? "—"} {"->"} {result.newCount ?? "—"} · Amount: {result.amount ?? "—"} · Tick: {result.tick ?? "—"}</div> : null}
+            {action.errorMessage ? <div className="text-xs text-red-300 mt-1">{action.errorMessage}</div> : null}
+          </div>;
+        })}
+      </div> : null}
+      <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent tick logs</div>
+      {recentTickLogs.length ? <div className="mt-2 grid gap-2">
+        {recentTickLogs.map((tickLog) => {
+          const tickSummary = tickLog.summary || {};
+          return <div key={tickLog.id} className="border border-orange-950 bg-black/50 p-2">
+            <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {tickLog.tick ?? "—"} · {tickLog.status || "unknown"}</div>
+            <div className="font-bold text-orange-200 mt-1">Manual DEV tick</div>
+            <div className="text-xs text-orange-200 mt-1">Processed: {tickSummary.processedTotal ?? tickSummary.processed_total ?? 0} · Factory builds: {tickSummary.factoryBuilds ?? tickSummary.factory_builds ?? 0} · Failed: {tickSummary.failedTotal ?? tickSummary.failed_total ?? 0}</div>
+            {tickLog.errorMessage ? <div className="text-xs text-red-300 mt-1">{tickLog.errorMessage}</div> : null}
+          </div>;
+        })}
+      </div> : null}
+      <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent public events</div>
+      {recentPublicEvents.length ? <div className="mt-2 grid gap-2">
+        {recentPublicEvents.map((event) => <div key={event.id} className="border border-orange-950 bg-black/50 p-2">
+          <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {event.tick ?? "—"} · {event.visibility || "unknown"}</div>
+          <div className="font-bold text-orange-200 mt-1">{event.title || event.eventType || "Event"}</div>
+          {event.body ? <div className="text-xs text-orange-200 mt-1 whitespace-pre-line">{event.body}</div> : null}
+          <div className="text-[11px] text-orange-700 mt-1">{event.createdAt ? new Date(event.createdAt).toLocaleString() : ""}</div>
+        </div>)}
+      </div> : null}
+      <p className="text-xs text-orange-600 mt-3">This proof is read-only until you click a DEV action button. It does not write to localStorage or Supabase, and it does not change the browser-local GLW or IG saves.</p>
+    </Panel>
+    <Panel title="Hosted DEV Round">
+      <p className="text-orange-200 mb-3">This is the player-facing hosted round entry view. It loads canonical server state from your invite-token grant instead of guessing from browser-local saves.</p>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={!canEnterHostedDevRound || hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Loading hosted state..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
+        <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+        <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        <span className="text-[10px] uppercase tracking-wide border border-cyan-700 bg-[#0b1d24] text-cyan-200 px-2 py-0.5">Invite-token hosted entry</span>
+      </div>
+      {hostedRoundState.error ? <div className="mb-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+      {hostedRoundState.message ? <div className="mb-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+      {!hostedSummary ? <div className="text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Redeem a real invite token and click Enter Hosted DEV Round to load your canonical hosted state.</div> : <div className="grid lg:grid-cols-2 gap-3">
+        {renderStatusCard("Hosted Access", [
+          ["Access mode", testerAccessModeLabel(testerAccessRecord)],
+          ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
+          ["Tester label", hostedPlayer?.testerLabel || testerLabel || "—"],
+          ["Current browser identity", hostedPlayerLabel],
+          ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
+          ["Grant id", hostedGrantId ? maskStableIdentifier(hostedGrantId) : "—"],
+          ["Round status", hostedRoundSummary?.roundStatus || hostedRound?.status || "Unknown"],
+          ["Last refreshed", hostedLastFetchLabel],
+        ], "This hosted view is canonical server state and remains separate from the local launcher save data.")}
+        {renderStatusCard("Service Health", [
+          ["Reachable", health ? (health.reachable ? "Yes" : "No") : "Unknown"],
+          ["Service", health?.service || "Not loaded"],
+          ["Version", health?.version || "—"],
+          ["Environment", health?.environment || "—"],
+          ["Supabase configured", health?.supabaseConfigured === true ? "Yes" : health?.supabaseConfigured === false ? "No" : "Unknown"],
+          ["DB reachable", health?.dbReachable === true ? "Yes" : health?.dbReachable === false ? "No" : "Unknown"],
+          ["Invite ledger", health?.inviteLedgerReachable === true ? "Yes" : health?.inviteLedgerReachable === false ? "No" : "Unknown"],
+          ["DEV endpoints", health?.devEndpointsEnabled === true ? "Enabled" : health?.devEndpointsEnabled === false ? "Disabled" : "Unknown"],
+          ["Allowed origins", Number.isFinite(Number(health?.allowedOriginsCount)) ? fmt(Number(health.allowedOriginsCount)) : "—"],
+          ["Last refreshed", lastHealthFetchLabel],
+        ], "This health check only reports service readiness and never exposes secrets.")}
+        {renderStatusCard("Canonical Player State", [
+          ["Round name", hostedRoundName],
+          ["Round key", hostedRoundKey],
+          ["Current tick", hostedCurrentTick],
+          ["Player", hostedPlayerLabel],
+          ["Current player id", hostedSummary?.currentPlayerId || hostedSummary?.player?.id ? maskStableIdentifier(hostedSummary.currentPlayerId || hostedSummary.player?.id) : "—"],
+          ["Identity scope", hostedSummary?.currentPlayerSummary?.identityScope || (hostedSummary?.currentPlayerSummary?.isGrantLinked ? "canonical" : "diagnostic")],
+          ["Factory count", fmt(Math.max(0, Math.floor(hostedFactoryCount)))],
+          ["Queued actions", fmt(hostedQueuedCount)],
+          ["Processed actions", fmt(hostedProcessedCount)],
+          ["Due now", fmt(hostedDueNowCount)],
+          ["Race", raceNameFromKey(hostedPlayerState?.raceKey || "")],
+          ["State version", hostedPlayerState?.stateVersion ?? "—"],
+          ["Land", hostedPlayerState ? fmt(Number(hostedPlayerState.land || 0)) : "—"],
+          ["Power", hostedPlayerState ? compactFmt(Number(hostedPlayerState.power || 0)) : "—"],
+          ["Money", hostedPlayerState ? compactFmt(Number(hostedPlayerState.money || 0)) : "—"],
+          ["Buildings", `Factories ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.factory ?? 0))))} · Barracks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.barracks ?? 0))))} · Banks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.bank ?? 0))))} · Science labs ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.scienceLabs ?? 0))))}`],
+          ["Armies", `Infantry ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.infantry ?? 0))))} · Defense ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.defense ?? 0))))} · Training ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.training ?? 0))))} · Returning ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.returning ?? 0))))}`],
+        ], "Loaded directly from the hosted game-service so the player view stays canonical.")}
+        {renderStatusCard("Other Players", hostedOtherPlayers.length ? hostedOtherPlayers.map((player, index) => [`Player ${index + 1}`, `${player.displayName || "Unknown player"}${player.testerLabel ? ` / ${player.testerLabel}` : ""} · Factories ${fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0))))} · Queued ${fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0))))} · Processed ${fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0))))} · Tick ${player.currentTick ?? "—"}`]) : [["Other players", "No other hosted players are visible yet."]], "Compact public summaries only.")}
+      </div>}
+      <p className="text-xs text-orange-600 mt-3">Hosted actions still call the existing DEV endpoints for now, but the round view itself is sourced from the server so the player state is canonical.</p>
+    </Panel>
+  </>;
+  };
   function renderHostedDiagnosticsPanel() {
     return <div className="grid gap-4">{renderSharedMultiplayerPreviewPanel()}</div>;
   }
@@ -6573,284 +6851,6 @@ export default function App() {
       </div> : <div className="text-sm text-orange-600 border border-orange-950 p-3 bg-black/60">No local GLW or IG save found for this browser. Start Godlike Warfare or Intro Game to create one.</div>}
       <p className="text-xs text-orange-600 mt-3">Launcher slot exports work for the selected slot. In-game debug export remains available from the Save / Load screen too.</p>
     </Panel>;
-    const renderSharedMultiplayerPreviewPanel = () => {
-      const summary = multiplayerPreviewState.summary || null;
-      const round = summary?.round || null;
-      const health = multiplayerHealthState.summary || null;
-      const players = Array.isArray(summary?.players) ? summary.players : [];
-      const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
-      const recentPublicEvents = Array.isArray(summary?.recentPublicEvents) ? summary.recentPublicEvents : recentEvents;
-      const recentActions = Array.isArray(summary?.recentActions) ? summary.recentActions : [];
-      const recentTickLogs = Array.isArray(summary?.recentTickLogs) ? summary.recentTickLogs : [];
-      const actionSummary = summary?.actionSummary || null;
-      const roundSummary = summary?.roundSummary || null;
-      const proofBoundary = summary?.proofBoundary || null;
-      const hostedSummary = hostedRoundState.summary || null;
-      const hostedRound = hostedSummary?.round || null;
-      const hostedPlayer = hostedSummary?.player || null;
-      const hostedPlayerState = hostedSummary?.playerState || null;
-      const hostedBuildings = hostedSummary?.buildings || null;
-      const hostedArmies = hostedSummary?.armies || null;
-      const hostedActionSummary = hostedSummary?.actionSummary || null;
-      const hostedOtherPlayers = Array.isArray(hostedSummary?.otherPlayers) ? hostedSummary.otherPlayers : [];
-      const hostedRoundSummary = hostedSummary?.roundSummary || null;
-      const previewBusy = multiplayerPreviewState.loading;
-      const roundKey = roundSummary?.roundKey || round?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
-      const roundName = roundSummary?.roundName || round?.roundName || "Shared Multiplayer DEV";
-      const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
-      const currentTick = roundSummary?.currentTick ?? round?.currentTick ?? "-";
-      const lastPreviewFetchLabel = multiplayerPreviewState.fetchedAt ? new Date(multiplayerPreviewState.fetchedAt).toLocaleString() : "Not refreshed yet";
-      const lastHealthFetchLabel = multiplayerHealthState.fetchedAt ? new Date(multiplayerHealthState.fetchedAt).toLocaleString() : "Not refreshed yet";
-      const identitySummary = multiplayerIdentityState.summary || (testerAccessRecord?.accepted && testerAccessRecord?.accessMode !== "invite-token" ? multiplayerIdentityFallbackSummary() : null);
-      const accessGrant = testerAccessRecord?.accessGrant || null;
-      const canEnterHostedDevRound = Boolean(testerAccessRecord?.accepted && testerAccessRecord?.accessMode === "invite-token" && (accessGrant?.grantId || accessGrant?.currentGrantId));
-      const hostedGrantId = hostedSummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
-      const hostedPlayerLabel = hostedPlayer ? `${hostedPlayer.displayName}${hostedPlayer.testerLabel ? ` / ${hostedPlayer.testerLabel}` : ""}` : (canEnterHostedDevRound ? "Hosted round not entered yet" : "Redeem a real invite token");
-      const hostedRoundKey = hostedRound?.roundKey || MULTIPLAYER_PREVIEW_ROUND_KEY;
-      const hostedRoundName = hostedRound?.roundName || "Shared Multiplayer DEV";
-      const hostedCurrentTick = hostedRound?.currentTick ?? hostedRoundSummary?.currentTick ?? "-";
-      const hostedLastFetchLabel = hostedRoundState.fetchedAt ? new Date(hostedRoundState.fetchedAt).toLocaleString() : "Not entered yet";
-      const hostedFactoryCount = Number(hostedSummary?.factoryCount ?? hostedBuildings?.factories ?? hostedBuildings?.counts?.factory ?? hostedSummary?.currentPlayerSummary?.factoryCount ?? 0);
-      const hostedQueuedCount = Number(hostedSummary?.queuedCount ?? hostedActionSummary?.queued ?? hostedSummary?.currentPlayerSummary?.queuedCount ?? 0);
-      const hostedProcessedCount = Number(hostedSummary?.processedCount ?? hostedActionSummary?.processed ?? hostedSummary?.currentPlayerSummary?.processedCount ?? 0);
-      const hostedDueNowCount = Number(hostedActionSummary?.dueNow ?? 0);
-      const grantId = identitySummary?.grantId || accessGrant?.grantId || accessGrant?.currentGrantId || "";
-      const testerLabel = identitySummary?.testerLabel || testerAccessRecord?.testerLabel || accessGrant?.testerLabel || "";
-      const displayName = identitySummary?.displayName || (multiplayerIdentityState.loading ? "Resolving multiplayer identity..." : testerAccessRecord?.accessMode === "invite-token" ? "Invite grant pending resolution" : "DEV Invite Tester");
-      const resolvedFrom = identitySummary?.resolvedFrom || (testerAccessRecord?.accessMode === "invite-token" ? "invite grant pending" : "development fallback");
-      const identityResolved = Boolean(identitySummary?.currentPlayerId || identitySummary?.playerId);
-      const playerId = identitySummary?.currentPlayerId || identitySummary?.playerId || "";
-      const playerRoundId = identitySummary?.playerRoundId || "";
-      const currentIdentityLabel = identityResolved ? displayName : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting invite-token identity resolution" : displayName;
-      const identityGuardLabel = identityResolved
-        ? (identitySummary?.requestedDisplayNameIgnored || identitySummary?.requestedTesterLabelIgnored ? "Requested labels ignored" : "No override detected")
-        : "Not resolved yet";
-      const totalPlayerCount = Number(roundSummary?.playerCount ?? players.length ?? 0);
-      const canonicalPlayerCount = Number(roundSummary?.canonicalPlayerCount ?? 0);
-      const playerCountLabel = canonicalPlayerCount > 0 ? "Canonical players" : "Players";
-      const playerCount = canonicalPlayerCount > 0 ? canonicalPlayerCount : totalPlayerCount;
-      const legacyPlayerCount = canonicalPlayerCount > 0 ? Number(roundSummary?.legacyPlayerCount ?? Math.max(0, totalPlayerCount - canonicalPlayerCount)) : 0;
-      const factoryCount = Number(roundSummary?.factoryCount ?? 0);
-      const queuedCount = Number(roundSummary?.queuedCount ?? actionSummary?.queued ?? 0);
-      const processedCount = Number(roundSummary?.processedCount ?? actionSummary?.processed ?? 0);
-      const dueNowCount = Number(actionSummary?.dueNow ?? 0);
-      const latestResetAt = proofBoundary?.latestResetAt || roundSummary?.latestResetAt || null;
-      const latestResetEvent = proofBoundary?.latestResetEvent || roundSummary?.latestResetEvent || null;
-      const latestResetLabel = latestResetAt ? new Date(latestResetAt).toLocaleString() : "No proof reset yet";
-      const latestResetEventLabel = latestResetEvent ? `${latestResetEvent.eventType || latestResetEvent.visibility || "Reset event"} · ${latestResetEvent.id ? maskStableIdentifier(latestResetEvent.id) : "unknown"}` : "No reset event yet";
-      const playerSummary = (player = {}) => {
-        const state = player.state || {};
-        return {
-          title: player.displayName || "Unknown player",
-          testerLabel: player.testerLabel || "",
-          playerId: player.id ? maskStableIdentifier(player.id) : "",
-          playerRoundId: player.playerRoundId ? maskStableIdentifier(player.playerRoundId) : "",
-          grantId: player.grantId ? maskStableIdentifier(player.grantId) : "",
-          accessLinkId: player.accessLinkId ? maskStableIdentifier(player.accessLinkId) : "",
-          identityScope: player.identityScope || (player.isGrantLinked ? "canonical" : "diagnostic"),
-          isGrantLinked: Boolean(player.isGrantLinked),
-          raceLabel: raceNameFromKey(state.raceKey || ""),
-          tick: state.tick ?? "—",
-          stateVersion: state.stateVersion ?? "—",
-          land: fmt(Number(state.land || 0)),
-          power: compactFmt(Number(state.power || 0)),
-          money: compactFmt(Number(state.money || 0)),
-          factoryCount: fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0)))),
-          queuedCount: fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0)))),
-          processedCount: fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0)))),
-        };
-      };
-      const renderStatusCard = (title, rows, note = null) => <div className="border border-orange-950 bg-black/50 p-3">
-        <div className="text-sm font-bold text-orange-200 mb-2">{title}</div>
-        <OldTable rows={rows} />
-        {note ? <div className="text-xs text-orange-600 mt-2">{note}</div> : null}
-      </div>;
-      return <>
-        <Panel title="Browser-Driven Multiplayer Proof">
-        <p className="text-orange-200 mb-3">This diagnostic proof stays browser-driven and local to your tester access. Resolve the invite grant, queue +1 factory, run a manual DEV tick, and confirm the updated factory count. The hosted round view below is the player-facing entry path; this panel remains for testing and troubleshooting.</p>
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          {canEnterHostedDevRound ? <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Entering Hosted DEV Round..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button> : <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Redeem a real invite token before entering a hosted round.</span>}
-          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerHealth} disabled={multiplayerHealthState.loading || multiplayerPreviewState.loading}>{multiplayerHealthState.loading ? "Refreshing service health..." : "Refresh service health"}</button>
-          <button className="classic-btn antro-action-btn" onClick={refreshMultiplayerPreview} disabled={multiplayerPreviewState.loading || multiplayerDevActionState.loading}>{multiplayerPreviewState.loading ? "Refreshing round summary..." : "Refresh round summary"}</button>
-          <button className="classic-btn antro-action-btn" onClick={resolveMyMultiplayerIdentity} disabled={multiplayerIdentityState.loading || multiplayerDevActionState.loading}>{multiplayerIdentityState.loading ? "Resolving identity..." : identityResolved ? "Re-resolve identity" : "Resolve my multiplayer identity"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevQueueBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading || !identityResolved}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevManualTick} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevResetProofRound} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_reset_proof_round" ? "Resetting proof window..." : "Reset proof cleanly"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitMultiplayerDevBuildFactory} disabled={multiplayerDevActionState.loading || multiplayerPreviewState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "dev_build_factory" ? "Running legacy proof..." : "Legacy immediate proof: build +1 factory"}</button>
-          <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Server-authorised proof</span>
-          <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{GAME_SERVICE_URL || "Game service unavailable"}</span>
-        </div>
-        <div className="grid lg:grid-cols-2 gap-3">
-          {renderStatusCard("Access Status", [
-            ["Access mode", testerAccessModeLabel(testerAccessRecord)],
-            ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
-            ["Tester label", testerLabel || "—"],
-            ["Current browser identity", currentIdentityLabel],
-            ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
-            ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
-            ["Access source", testerAccessRecord?.accessMode === "invite-token" ? "Invite-token gate" : "Development fallback"],
-          ], "Tester access remains browser-local and separate from the save data.")}
-          {renderStatusCard("Service Health", [
-            ["Reachable", health ? (health.reachable ? "Yes" : "No") : "Unknown"],
-            ["Service", health?.service || "Not loaded"],
-            ["Version", health?.version || "—"],
-            ["Environment", health?.environment || "—"],
-            ["Supabase configured", health?.supabaseConfigured === true ? "Yes" : health?.supabaseConfigured === false ? "No" : "Unknown"],
-            ["DB reachable", health?.dbReachable === true ? "Yes" : health?.dbReachable === false ? "No" : "Unknown"],
-            ["Invite ledger", health?.inviteLedgerReachable === true ? "Yes" : health?.inviteLedgerReachable === false ? "No" : "Unknown"],
-            ["DEV endpoints", health?.devEndpointsEnabled === true ? "Enabled" : health?.devEndpointsEnabled === false ? "Disabled" : "Unknown"],
-            ["Allowed origins", Number.isFinite(Number(health?.allowedOriginsCount)) ? fmt(Number(health.allowedOriginsCount)) : "—"],
-            ["Last refreshed", lastHealthFetchLabel],
-          ], "This health check only reports service readiness and never exposes secrets.")}          
-          {renderStatusCard("Identity Status", [
-            ["Resolved state", identityResolved ? "Resolved" : multiplayerIdentityState.loading ? "Resolving..." : testerAccessRecord?.accessMode === "invite-token" ? "Awaiting resolve" : "Fallback ready"],
-            ["Current browser identity", currentIdentityLabel],
-            ["Tester label", testerLabel || "—"],
-            ["Resolved from", resolvedFrom],
-            ["Impersonation guard", identityGuardLabel],
-            ["Grant id", grantId ? maskStableIdentifier(grantId) : "—"],
-            ["Player id", playerId ? maskStableIdentifier(playerId) : "—"],
-            ["Player round id", playerRoundId ? maskStableIdentifier(playerRoundId) : "—"],
-            ["Round key", roundKey],
-            ["Round name", roundName],
-            ["Current tick", currentTick],
-            ["Last refreshed", multiplayerIdentityState.fetchedAt ? new Date(multiplayerIdentityState.fetchedAt).toLocaleString() : "Not refreshed yet"],
-          ], "Resolve identity before queueing a factory order so the selected grant is linked to the right player.")}
-          {renderStatusCard("Round Proof Summary", [
-            ["Round status", roundStatus],
-            [playerCountLabel, fmt(playerCount)],
-            ...(legacyPlayerCount > 0 ? [["Legacy players", fmt(legacyPlayerCount)]] : []),
-            ["Factory count", fmt(Math.max(0, Math.floor(factoryCount)))],
-            ["Queued rows", fmt(queuedCount)],
-            ["Processed rows", fmt(processedCount)],
-            ["Due now", fmt(dueNowCount)],
-            ["Latest reset at", latestResetLabel],
-            ["Latest reset event", latestResetEventLabel],
-            ["Recent public events", fmt(recentPublicEvents.length)],
-            ["Recent actions", fmt(recentActions.length)],
-            ["Recent tick logs", fmt(recentTickLogs.length)],
-            ["Last round refresh", lastPreviewFetchLabel],
-          ], "The lists below are trimmed to the latest DEV proof boundary.")}          
-        </div>
-        {previewBusy ? <div className="mt-3 text-xs text-orange-500">Loading shared multiplayer proof data...</div> : null}
-        {multiplayerPreviewState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerPreviewState.error}</div> : null}
-        {multiplayerIdentityState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerIdentityState.error}</div> : null}
-        {multiplayerIdentityState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerIdentityState.message}</div> : null}
-        {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
-        {multiplayerDevActionState.lastActionMessage ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{multiplayerDevActionState.lastActionMessage}</div> : null}
-        {!previewBusy && !multiplayerPreviewState.error && !summary ? <div className="mt-3 text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Refresh the panel to load the hosted Shared Multiplayer DEV round summary.</div> : null}
-        {players.length ? <div className="mt-3 grid gap-2">
-          {players.map((player) => {
-            const details = playerSummary(player);
-            const isCurrentPlayer = identityResolved && player.id === playerId;
-            return <div key={player.id} className={`border p-2 ${isCurrentPlayer ? "border-cyan-300 bg-cyan-950/15" : "border-orange-950 bg-black/50"}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-orange-200">{details.title}</span>
-                {isCurrentPlayer ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">You</span> : null}
-                {details.identityScope === "canonical" ? <span className="text-[10px] uppercase tracking-wide border border-cyan-300 bg-cyan-950/35 text-cyan-100 px-2 py-0.5">Canonical</span> : details.identityScope === "legacy" ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Legacy</span> : <span className="text-[10px] uppercase tracking-wide border border-orange-800 bg-black/50 text-orange-500 px-2 py-0.5">Diagnostic</span>}
-                {details.testerLabel ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">{details.testerLabel}</span> : null}
-                {details.playerId ? <span className="text-[10px] uppercase tracking-wide border border-orange-700 bg-[#241004] text-orange-200 px-2 py-0.5">Player {details.playerId}</span> : null}
-              </div>
-              <div className="text-xs text-orange-600 mt-1">Race: {details.raceLabel || "Unknown"} · Tick: {details.tick} · State version: {details.stateVersion}</div>
-              <div className="text-xs text-orange-600 mt-1">Land: {details.land} · Power: {details.power} · Money: {details.money}</div>
-              <div className="text-xs text-orange-700 mt-1">Factory count: {details.factoryCount} · Queued: {details.queuedCount} · Processed: {details.processedCount}{isCurrentPlayer ? " · Current browser identity" : ""}</div>
-            </div>;
-          })}
-        </div> : null}
-        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent actions</div>
-        {recentActions.length ? <div className="mt-2 grid gap-2">
-          {recentActions.map((action) => {
-            const result = action.resultSummary || null;
-            return <div key={action.id} className="border border-orange-950 bg-black/50 p-2">
-              <div className="text-[10px] uppercase tracking-wide text-orange-600">Request tick {action.requestedTick ?? "—"} · Execute after {action.executeAfterTick ?? "—"} · {action.status || "unknown"}</div>
-              <div className="font-bold text-orange-200 mt-1">{action.actionType || "Action"}</div>
-              {result ? <div className="text-xs text-orange-200 mt-1">Factory: {result.oldCount ?? "—"} {"->"} {result.newCount ?? "—"} · Amount: {result.amount ?? "—"} · Tick: {result.tick ?? "—"}</div> : null}
-              {action.errorMessage ? <div className="text-xs text-red-300 mt-1">{action.errorMessage}</div> : null}
-            </div>;
-          })}
-        </div> : null}
-        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent tick logs</div>
-        {recentTickLogs.length ? <div className="mt-2 grid gap-2">
-          {recentTickLogs.map((tickLog) => {
-            const tickSummary = tickLog.summary || {};
-            return <div key={tickLog.id} className="border border-orange-950 bg-black/50 p-2">
-              <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {tickLog.tick ?? "—"} · {tickLog.status || "unknown"}</div>
-              <div className="font-bold text-orange-200 mt-1">Manual DEV tick</div>
-              <div className="text-xs text-orange-200 mt-1">Processed: {tickSummary.processedTotal ?? tickSummary.processed_total ?? 0} · Factory builds: {tickSummary.factoryBuilds ?? tickSummary.factory_builds ?? 0} · Failed: {tickSummary.failedTotal ?? tickSummary.failed_total ?? 0}</div>
-              {tickLog.errorMessage ? <div className="text-xs text-red-300 mt-1">{tickLog.errorMessage}</div> : null}
-            </div>;
-          })}
-        </div> : null}
-        <div className="mt-3 text-[10px] uppercase tracking-wide text-orange-600">Recent public events</div>
-        {recentPublicEvents.length ? <div className="mt-2 grid gap-2">
-          {recentPublicEvents.map((event) => <div key={event.id} className="border border-orange-950 bg-black/50 p-2">
-            <div className="text-[10px] uppercase tracking-wide text-orange-600">Tick {event.tick ?? "—"} · {event.visibility || "unknown"}</div>
-            <div className="font-bold text-orange-200 mt-1">{event.title || event.eventType || "Event"}</div>
-            {event.body ? <div className="text-xs text-orange-200 mt-1 whitespace-pre-line">{event.body}</div> : null}
-            <div className="text-[11px] text-orange-700 mt-1">{event.createdAt ? new Date(event.createdAt).toLocaleString() : ""}</div>
-          </div>)}
-        </div> : null}
-        <p className="text-xs text-orange-600 mt-3">This proof is read-only until you click a DEV action button. It does not write to localStorage or Supabase, and it does not change the browser-local GLW or IG saves.</p>
-      </Panel>
-      <Panel title="Hosted DEV Round">
-        <p className="text-orange-200 mb-3">This is the player-facing hosted round entry view. It loads canonical server state from your invite-token grant instead of guessing from browser-local saves.</p>
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={!canEnterHostedDevRound || hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Loading hosted state..." : hostedSummary ? "Refresh hosted state" : "Enter Hosted DEV Round"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 factory"}</button>
-          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={!hostedSummary || hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
-          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
-          <span className="text-[10px] uppercase tracking-wide border border-cyan-700 bg-[#0b1d24] text-cyan-200 px-2 py-0.5">Invite-token hosted entry</span>
-        </div>
-        {hostedRoundState.error ? <div className="mb-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
-        {hostedRoundState.message ? <div className="mb-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
-        {!hostedSummary ? <div className="text-sm text-orange-600 border border-orange-950 bg-black/50 p-3">Redeem a real invite token and click Enter Hosted DEV Round to load your canonical hosted state.</div> : <div className="grid lg:grid-cols-2 gap-3">
-          {renderStatusCard("Hosted Access", [
-            ["Access mode", testerAccessModeLabel(testerAccessRecord)],
-            ["Access accepted", testerAccessRecord?.accepted ? "Yes" : "No"],
-            ["Tester label", hostedPlayer?.testerLabel || testerLabel || "—"],
-            ["Current browser identity", hostedPlayerLabel],
-            ["Grant status", accessGrant ? "Invite grant present" : "No invite grant"],
-            ["Grant id", hostedGrantId ? maskStableIdentifier(hostedGrantId) : "—"],
-            ["Round status", hostedRoundSummary?.roundStatus || hostedRound?.status || "Unknown"],
-            ["Last refreshed", hostedLastFetchLabel],
-          ], "This hosted view is canonical server state and remains separate from the local launcher save data.")}
-          {renderStatusCard("Service Health", [
-            ["Reachable", health ? (health.reachable ? "Yes" : "No") : "Unknown"],
-            ["Service", health?.service || "Not loaded"],
-            ["Version", health?.version || "—"],
-            ["Environment", health?.environment || "—"],
-            ["Supabase configured", health?.supabaseConfigured === true ? "Yes" : health?.supabaseConfigured === false ? "No" : "Unknown"],
-            ["DB reachable", health?.dbReachable === true ? "Yes" : health?.dbReachable === false ? "No" : "Unknown"],
-            ["Invite ledger", health?.inviteLedgerReachable === true ? "Yes" : health?.inviteLedgerReachable === false ? "No" : "Unknown"],
-            ["DEV endpoints", health?.devEndpointsEnabled === true ? "Enabled" : health?.devEndpointsEnabled === false ? "Disabled" : "Unknown"],
-            ["Allowed origins", Number.isFinite(Number(health?.allowedOriginsCount)) ? fmt(Number(health.allowedOriginsCount)) : "—"],
-            ["Last refreshed", lastHealthFetchLabel],
-          ], "This health check only reports service readiness and never exposes secrets.")}
-          {renderStatusCard("Canonical Player State", [
-            ["Round name", hostedRoundName],
-            ["Round key", hostedRoundKey],
-            ["Current tick", hostedCurrentTick],
-            ["Player", hostedPlayerLabel],
-            ["Current player id", hostedSummary?.currentPlayerId || hostedSummary?.player?.id ? maskStableIdentifier(hostedSummary.currentPlayerId || hostedSummary.player?.id) : "—"],
-            ["Identity scope", hostedSummary?.currentPlayerSummary?.identityScope || (hostedSummary?.currentPlayerSummary?.isGrantLinked ? "canonical" : "diagnostic")],
-            ["Factory count", fmt(Math.max(0, Math.floor(hostedFactoryCount)))],
-            ["Queued actions", fmt(hostedQueuedCount)],
-            ["Processed actions", fmt(hostedProcessedCount)],
-            ["Due now", fmt(hostedDueNowCount)],
-            ["Race", raceNameFromKey(hostedPlayerState?.raceKey || "")],
-            ["State version", hostedPlayerState?.stateVersion ?? "—"],
-            ["Land", hostedPlayerState ? fmt(Number(hostedPlayerState.land || 0)) : "—"],
-            ["Power", hostedPlayerState ? compactFmt(Number(hostedPlayerState.power || 0)) : "—"],
-            ["Money", hostedPlayerState ? compactFmt(Number(hostedPlayerState.money || 0)) : "—"],
-            ["Buildings", `Factories ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.factory ?? 0))))} · Barracks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.barracks ?? 0))))} · Banks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.bank ?? 0))))} · Science labs ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.scienceLabs ?? 0))))}`],
-            ["Armies", `Infantry ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.infantry ?? 0))))} · Defense ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.defense ?? 0))))} · Training ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.training ?? 0))))} · Returning ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.returning ?? 0))))}`],
-          ], "Loaded directly from the hosted game-service so the player view stays canonical.")}
-          {renderStatusCard("Other Players", hostedOtherPlayers.length ? hostedOtherPlayers.map((player, index) => [`Player ${index + 1}`, `${player.displayName || "Unknown player"}${player.testerLabel ? ` / ${player.testerLabel}` : ""} · Factories ${fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0))))} · Queued ${fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0))))} · Processed ${fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0))))} · Tick ${player.currentTick ?? "—"}`]) : [["Other players", "No other hosted players are visible yet."]], "Compact public summaries only.")}
-        </div>}
-        <p className="text-xs text-orange-600 mt-3">Hosted actions still call the existing DEV endpoints for now, but the round view itself is sourced from the server so the player state is canonical.</p>
-      </Panel>
-    </>;
-    };
 
     return shell(<>
       <div className="grid xl:grid-cols-[1.15fr_0.85fr] gap-4">
