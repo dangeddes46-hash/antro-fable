@@ -3442,8 +3442,10 @@ function normalizeHostedArmySummary(rows = []) {
   const summaryForKey = (key) => {
     const row = (grouped.get(key) || [null])[0];
     const count = Math.max(0, Math.floor(Number(row?.count ?? 0)));
-    const trainingCount = Math.max(0, Math.floor(Number(row?.training_count ?? 0)));
-    const returningCount = Math.max(0, Math.floor(Number(row?.returning_count ?? 0)));
+    // Rows arrive either raw (snake_case) or pre-formatted (camelCase, via
+    // formatArmyRows) depending on the caller, matching canonicalCountFromRows.
+    const trainingCount = Math.max(0, Math.floor(Number(row?.training_count ?? row?.trainingCount ?? 0)));
+    const returningCount = Math.max(0, Math.floor(Number(row?.returning_count ?? row?.returningCount ?? 0)));
     return {
       count,
       trainingCount,
