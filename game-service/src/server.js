@@ -386,6 +386,7 @@ app.post('/api/dev/actions/queue-build-factory', requireDevEndpoints, async (req
         cost: result.cost ?? result.action.payload?.cost ?? null,
         requestedTick: result.requestedTick,
         executeAfterTick: result.executeAfterTick,
+        durationTicks: result.durationTicks ?? null,
         payload: result.action.payload,
         result: result.action.result,
       },
@@ -397,7 +398,7 @@ app.post('/api/dev/actions/queue-build-factory', requireDevEndpoints, async (req
       player: {
         displayName: result.player.displayName,
       },
-      message: 'Build order queued for next tick.',
+      message: 'Build order queued.',
       timestamp: nowIso(),
     });
   } catch (error) {
@@ -442,6 +443,52 @@ app.post('/api/dev/tick/manual-run', requireDevEndpoints, async (req, res) => {
     });
   } catch (error) {
     sendErrorResponse(res, error, 'manual_tick_failed');
+  }
+});
+
+app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev complete-due endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const completeInput = normalizeDevCompleteDueInput(req.body || {});
+    // Completion is always scoped to the grant-linked player who visited the
+    // screen; identityless requests are rejected.
+    const identity = await resolveDevPlayerIdentity(completeInput, { requireGrant: true });
+    const result = await completeDueOrdersForPlayer(identity, completeInput.screen);
+
+    res.status(200).json({
+      ok: true,
+      screen: result.screen,
+      completed: {
+        total: result.completedTotal,
+        actions: result.completedActions,
+        failedActionIds: result.failedActionIds,
+      },
+      round: {
+        roundKey: identity.round.round_key,
+        currentTick: result.currentTick,
+      },
+      player: {
+        displayName: identity.player.display_name,
+      },
+      message: result.completedTotal > 0
+        ? `${result.completedTotal} finished ${result.completedTotal === 1 ? 'order' : 'orders'} completed.`
+        : 'No finished orders were waiting.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'complete_due_failed');
   }
 });
 
@@ -983,6 +1030,49 @@ function devBuildingCost(buildingKey, amount) {
   return unitCost * Math.max(1, Math.floor(Number(amount) || 1));
 }
 
+// ── Order timing reference port ───────────────────────────────────────────────
+// One hosted round tick represents 30 in-game minutes = 1800 game-seconds, the
+// same tick base the local prototype uses (src/gameMath.js SCIENCE_TICK_SECONDS
+// and dueGameTicks). Order durations come from the reference formulas:
+//   constructionDurationSeconds(cost, buildings, allocation)   (src/gameMath.js)
+//   CONSTRUCTION_FACTORY_CURVE                                 (src/gameMath.js)
+// The hosted round has no factory-allocation state, so the reference client
+// default (construction: "100") applies and every factory counts toward the
+// curve. Speed factors and species construction bonuses are not hosted state
+// and stay at their neutral reference values (factor 1 / multiplier 1).
+const ORDER_TICK_GAME_SECONDS = 1800;
+const ORDER_CONSTRUCTION_FACTORY_CURVE = [
+  [0, 1],
+  [500, 3],
+  [1000, 5],
+  [2000, 9],
+  [4000, 13],
+  [8000, 19],
+  [16000, 25],
+  [32000, 33],
+];
+function orderConstructionFactoryMultiplier(factories) {
+  const effective = Math.max(0, Number(factories) || 0);
+  if (effective <= 0) return 1;
+  for (let i = 1; i < ORDER_CONSTRUCTION_FACTORY_CURVE.length; i += 1) {
+    const [prevFactories, prevMultiplier] = ORDER_CONSTRUCTION_FACTORY_CURVE[i - 1];
+    const [nextFactories, nextMultiplier] = ORDER_CONSTRUCTION_FACTORY_CURVE[i];
+    if (effective <= nextFactories) {
+      const span = nextFactories - prevFactories;
+      const progress = span > 0 ? (effective - prevFactories) / span : 0;
+      return prevMultiplier + ((nextMultiplier - prevMultiplier) * progress);
+    }
+  }
+  const [lastFactories, lastMultiplier] = ORDER_CONSTRUCTION_FACTORY_CURVE[ORDER_CONSTRUCTION_FACTORY_CURVE.length - 1];
+  return lastMultiplier + ((effective - lastFactories) / 8000);
+}
+function orderConstructionDurationSeconds(cost, factories) {
+  return (Number(cost) || 0) / 4 / orderConstructionFactoryMultiplier(factories);
+}
+function orderTicksFromGameSeconds(seconds) {
+  return Math.max(1, Math.ceil((Number(seconds) || 0) / ORDER_TICK_GAME_SECONDS));
+}
+
 function createServiceError(statusCode, code, message) {
   return Object.assign(new Error(message), { statusCode, code });
 }
@@ -1479,12 +1569,25 @@ async function queueDevFactoryAction(actionInput) {
 
   const previousTick = Number(round.current_tick || 0);
   const requestedTick = previousTick;
-  const executeAfterTick = previousTick + 1;
   const amount = actionInput.amount;
 
   // Build orders debit the reference building cost at queue time, mirroring the
   // local prototype, which charges Cardisium when construction starts.
   const cost = devBuildingCost(buildingKey, amount);
+
+  // Real construction duration from the reference formula: factories assigned to
+  // construction (hosted default: all of them) accelerate the build. The order
+  // becomes due ("finished") once the round reaches executeAfterTick, but it is
+  // only applied when the player visits the Build screen (complete-due).
+  const factoryRows = await fetchRows(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'factory')
+  );
+  const factoryCount = canonicalCountFromRows(factoryRows);
+  const durationSeconds = orderConstructionDurationSeconds(cost, factoryCount);
+  const durationTicks = orderTicksFromGameSeconds(durationSeconds);
+  const executeAfterTick = previousTick + durationTicks;
   const stateResult = await getOrCreatePlayerState(round.id, player.id);
   const stateRow = stateResult.row;
   const availableMoney = Number(stateRow.money || 0);
@@ -1592,6 +1695,7 @@ async function queueDevFactoryAction(actionInput) {
     previousTick,
     requestedTick,
     executeAfterTick,
+    durationTicks,
     amount,
     buildingKey,
     cost,
@@ -1667,141 +1771,14 @@ async function runManualDevTick(tickInput) {
     });
   }
 
-  const queuedActions = await fetchRows(
-    'multiplayer_action_queue',
-    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
-    (query) => query.eq('round_id', round.id).eq('action_type', 'dev_queue_build_factory').eq('status', 'queued').lte('execute_after_tick', nextTick).order('created_at', { ascending: true })
-  );
-
-  let processedTotal = 0;
-  let factoryBuilds = 0;
+  // Ticks no longer apply queued orders. An order whose execute_after_tick has
+  // been reached is "finished" (actionSummary.dueNow) but only applies when the
+  // player visits the matching screen and the complete-due endpoint runs —
+  // mirroring the local prototype, where finished orders wait for a page visit.
+  const processedTotal = 0;
+  const factoryBuilds = 0;
   const processedActionIds = [];
   const failedActionIds = [];
-
-  for (const action of queuedActions) {
-    const actionNow = nowIso();
-    try {
-      const actionAmount = clampDevBuildAmount(action.payload?.amount ?? 1);
-      const actionBuildingKey = normalizeDevBuildingKey(action.payload?.buildingKey ?? action.payload?.building_key);
-      const player = await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label, status, created_from_grant_id, created_at, updated_at, last_seen_at, notes', (query) =>
-        query.eq('id', action.player_id)
-      );
-
-      if (!player) {
-        throw createServiceError(404, 'player_not_found', 'Queued DEV action player was not found.');
-      }
-
-      const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
-        query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
-      );
-
-      if (!playerRound) {
-        throw createServiceError(409, 'player_not_joined', `${player.display_name} is not joined to the shared round.`);
-      }
-
-      await updateSingleRow('multiplayer_action_queue', {
-        status: 'processing',
-        updated_at: actionNow,
-      }, (query) => query.eq('id', action.id));
-
-      const buildingRows = await fetchRows(
-        'multiplayer_player_buildings',
-        'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
-        (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', actionBuildingKey)
-      );
-      const oldCount = canonicalCountFromRows(buildingRows);
-      const newCount = oldCount + actionAmount;
-      const processedAt = nowIso();
-      const actionResult = {
-        actionType: 'dev_queue_build_factory',
-        buildingKey: actionBuildingKey,
-        amount: actionAmount,
-        oldCount,
-        newCount,
-        tick: nextTick,
-      };
-
-      await upsertRow('multiplayer_player_buildings', {
-        round_id: round.id,
-        player_id: player.id,
-        building_key: actionBuildingKey,
-        count: newCount,
-        effective_count: newCount,
-        updated_at: processedAt,
-      }, 'player_id,round_id,building_key');
-
-      await updateSingleRow('multiplayer_action_queue', {
-        status: 'processed',
-        result: actionResult,
-        error_message: null,
-        processed_at: processedAt,
-        updated_at: processedAt,
-      }, (query) => query.eq('id', action.id));
-
-      await insertSingleRow('multiplayer_round_events', {
-        round_id: round.id,
-        tick: nextTick,
-        event_type: 'dev_build_factory_processed',
-        visibility: 'public',
-        actor_player_id: player.id,
-        title: `${devBuildingNoun(actionBuildingKey, 1).charAt(0).toUpperCase()}${devBuildingNoun(actionBuildingKey, 1).slice(1)} order completed`,
-        body: `${player.display_name} completed an order for ${actionAmount} ${devBuildingNoun(actionBuildingKey, actionAmount)}.`,
-        payload: {
-          actionQueueId: action.id,
-          ...actionResult,
-        },
-      });
-
-      await insertSingleRow('multiplayer_audit_log', {
-        round_id: round.id,
-        player_id: player.id,
-        actor_type: 'dev',
-        event_type: 'dev_build_factory_processed',
-        event_data: {
-          round_id: round.id,
-          round_key: round.round_key,
-          player_id: player.id,
-          display_name: player.display_name,
-          action_queue_id: action.id,
-          action_type: 'dev_queue_build_factory',
-          building_key: actionBuildingKey,
-          amount: actionAmount,
-          old_count: oldCount,
-          new_count: newCount,
-          tick: nextTick,
-        },
-      });
-
-      processedTotal += 1;
-      if (actionBuildingKey === 'factory') {
-        factoryBuilds += actionAmount;
-      }
-      processedActionIds.push(action.id);
-    } catch (error) {
-      failedActionIds.push(action.id);
-      await updateSingleRow('multiplayer_action_queue', {
-        status: 'failed',
-        error_message: error instanceof Error ? error.message : 'Unexpected manual tick failure.',
-        updated_at: nowIso(),
-      }, (query) => query.eq('id', action.id)).catch(() => {});
-
-      await insertSingleRow('multiplayer_audit_log', {
-        round_id: round.id,
-        player_id: action.player_id,
-        actor_type: 'dev',
-        event_type: 'dev_build_factory_failed',
-        event_data: {
-          round_id: round.id,
-          round_key: round.round_key,
-          action_queue_id: action.id,
-          action_type: 'dev_queue_build_factory',
-          requested_tick: action.requested_tick,
-          execute_after_tick: action.execute_after_tick,
-          error_message: error instanceof Error ? error.message : 'Unexpected manual tick failure.',
-        },
-      }).catch(() => {});
-    }
-  }
 
   // Economy runs after queued-action processing so completed builds are counted
   // before production, matching the client ordering (order completion is applied
@@ -1858,6 +1835,187 @@ async function runManualDevTick(tickInput) {
     economy: {
       playersProcessed: economy.playersProcessed,
     },
+  };
+}
+
+// ── Generic due-order completion ──────────────────────────────────────────────
+// Shared mechanism for every duration-based order type (build now, training in
+// this pass, science/explore later): orders queue with a real duration in ticks,
+// count as "finished" once the round reaches execute_after_tick, and are applied
+// only when the owning player visits the matching screen. Appliers receive the
+// due action and mutate canonical state; registration is by action_type.
+const DEV_SCREEN_ACTION_TYPES = {
+  build: ['dev_queue_build_factory'],
+  barracks: ['dev_queue_train_units'],
+};
+
+function normalizeDevCompleteDueInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const screen = normalizeText(String(body.screen || '')).toLowerCase();
+  if (!DEV_SCREEN_ACTION_TYPES[screen]) {
+    throw createServiceError(400, 'invalid_screen', `screen must be one of: ${Object.keys(DEV_SCREEN_ACTION_TYPES).join(', ')}.`);
+  }
+  return { ...identity, screen };
+}
+
+async function applyDueBuildOrder({ round, player, action, appliedAtTick }) {
+  const actionAmount = clampDevBuildAmount(action.payload?.amount ?? 1);
+  const actionBuildingKey = normalizeDevBuildingKey(action.payload?.buildingKey ?? action.payload?.building_key);
+  const buildingRows = await fetchRows(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', actionBuildingKey)
+  );
+  const oldCount = canonicalCountFromRows(buildingRows);
+  const newCount = oldCount + actionAmount;
+  const processedAt = nowIso();
+  const actionResult = {
+    actionType: 'dev_queue_build_factory',
+    buildingKey: actionBuildingKey,
+    amount: actionAmount,
+    oldCount,
+    newCount,
+    tick: appliedAtTick,
+  };
+
+  await upsertRow('multiplayer_player_buildings', {
+    round_id: round.id,
+    player_id: player.id,
+    building_key: actionBuildingKey,
+    count: newCount,
+    effective_count: newCount,
+    updated_at: processedAt,
+  }, 'player_id,round_id,building_key');
+
+  return {
+    actionResult,
+    eventType: 'dev_build_factory_processed',
+    eventTitle: `${devBuildingNoun(actionBuildingKey, 1).charAt(0).toUpperCase()}${devBuildingNoun(actionBuildingKey, 1).slice(1)} order completed`,
+    eventBody: `${player.display_name} completed an order for ${actionAmount} ${devBuildingNoun(actionBuildingKey, actionAmount)}.`,
+    auditData: {
+      building_key: actionBuildingKey,
+      amount: actionAmount,
+      old_count: oldCount,
+      new_count: newCount,
+    },
+  };
+}
+
+const DEV_ORDER_APPLIERS = {
+  dev_queue_build_factory: applyDueBuildOrder,
+};
+
+async function completeDueOrdersForPlayer(identity, screen) {
+  const round = identity.round;
+  const player = identity.player;
+  const actionTypes = DEV_SCREEN_ACTION_TYPES[screen];
+  const currentTick = Number(round.current_tick || 0);
+
+  const playerRound = await fetchSingleRow('multiplayer_player_rounds', 'id, player_id, round_id, role, status, joined_at, left_at, created_at, updated_at', (query) =>
+    query.eq('round_id', round.id).eq('player_id', player.id).eq('status', 'active')
+  );
+  if (!playerRound) {
+    throw createServiceError(409, 'player_not_joined', `${player.display_name} is not joined to the shared round.`);
+  }
+
+  const dueActions = await fetchRows(
+    'multiplayer_action_queue',
+    'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).in('action_type', actionTypes).eq('status', 'queued').lte('execute_after_tick', currentTick).order('created_at', { ascending: true })
+  );
+
+  let completedTotal = 0;
+  const completedActions = [];
+  const failedActionIds = [];
+
+  for (const action of dueActions) {
+    try {
+      const applier = DEV_ORDER_APPLIERS[action.action_type];
+      if (!applier) {
+        throw createServiceError(500, 'applier_missing', `No completion applier is registered for ${action.action_type}.`);
+      }
+
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'processing',
+        updated_at: nowIso(),
+      }, (query) => query.eq('id', action.id));
+
+      const applied = await applier({ round, player, action, appliedAtTick: currentTick });
+      const processedAt = nowIso();
+
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'processed',
+        result: applied.actionResult,
+        error_message: null,
+        processed_at: processedAt,
+        updated_at: processedAt,
+      }, (query) => query.eq('id', action.id));
+
+      await insertSingleRow('multiplayer_round_events', {
+        round_id: round.id,
+        tick: currentTick,
+        event_type: applied.eventType,
+        visibility: 'public',
+        actor_player_id: player.id,
+        title: applied.eventTitle,
+        body: applied.eventBody,
+        payload: {
+          actionQueueId: action.id,
+          ...applied.actionResult,
+        },
+      });
+
+      await insertSingleRow('multiplayer_audit_log', {
+        round_id: round.id,
+        player_id: player.id,
+        actor_type: 'dev',
+        event_type: applied.eventType,
+        event_data: {
+          round_id: round.id,
+          round_key: round.round_key,
+          player_id: player.id,
+          display_name: player.display_name,
+          action_queue_id: action.id,
+          action_type: action.action_type,
+          tick: currentTick,
+          ...applied.auditData,
+        },
+      });
+
+      completedTotal += 1;
+      completedActions.push({ id: action.id, actionType: action.action_type, result: applied.actionResult });
+    } catch (error) {
+      failedActionIds.push(action.id);
+      await updateSingleRow('multiplayer_action_queue', {
+        status: 'failed',
+        error_message: error instanceof Error ? error.message : 'Unexpected completion failure.',
+        updated_at: nowIso(),
+      }, (query) => query.eq('id', action.id)).catch(() => {});
+
+      await insertSingleRow('multiplayer_audit_log', {
+        round_id: round.id,
+        player_id: action.player_id,
+        actor_type: 'dev',
+        event_type: 'dev_order_completion_failed',
+        event_data: {
+          round_id: round.id,
+          round_key: round.round_key,
+          action_queue_id: action.id,
+          action_type: action.action_type,
+          requested_tick: action.requested_tick,
+          execute_after_tick: action.execute_after_tick,
+          error_message: error instanceof Error ? error.message : 'Unexpected completion failure.',
+        },
+      }).catch(() => {});
+    }
+  }
+
+  return {
+    screen,
+    currentTick,
+    completedTotal,
+    completedActions,
+    failedActionIds,
   };
 }
 
