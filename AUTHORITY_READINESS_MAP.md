@@ -150,6 +150,34 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   zero likely came from the round-wide canonical-rows filter. Needs a dedicated
   look; the client reads the correct top-level field either way.
 
+## 3e. Slice 4 status (completion-timing correction + Barracks training) — done
+
+- **Build timing corrected**: orders now carry a real duration from the
+  reference formula (constructionDurationSeconds; factory curve; 1 tick = 1800
+  game-seconds). Manual ticks only advance time and economy. A due order is
+  "finished" (actionSummary.dueNow, surfaced as "Orders ready to complete") and
+  applies only when the player visits the matching screen, which calls
+  POST /api/dev/actions/complete-due — the local prototype's page-visit
+  completion pattern. The mechanism is generic (screen → action types → applier
+  registry); Science and Explore plug in later without new plumbing.
+- **Barracks/training live** (Option C): six race-agnostic slot rows
+  (unit_1..unit_6), race resolved at read time from state.race_key, costs/caps/
+  names verbatim from the reference races table, duration from
+  trainingDurationSeconds (species divider neutral at 1). training_count shows
+  pending training; completion on the Barracks visit moves it into count.
+  returning_count stays dormant (combat returns survivors immediately in this
+  game's model — future combat slice). Verified for human AND lithi costs/caps.
+- Consequence for earlier slices: the economy's "completions before production"
+  ordering note is superseded — completions now happen outside ticks entirely;
+  a completed producer starts producing on the tick after its completion.
+  Verified against the reference oracle including a 3-tick power plant order.
+- Third latent bug fixed: normalizeHostedArmySummary read training_count/
+  returning_count in snake_case only while the enter path feeds camelCased
+  rows — trainingCount always read 0 there (dormant until this slice).
+- Species-bonus modifiers (construction/training speed, speed-mineral caps) are
+  wording-mode/species dependent and deferred with the species-selection slice;
+  all hosted durations use their neutral reference values, documented in code.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
