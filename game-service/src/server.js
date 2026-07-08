@@ -497,6 +497,55 @@ app.post('/api/dev/actions/queue-train-units', requireDevEndpoints, async (req, 
   }
 });
 
+app.post('/api/dev/actions/queue-explore', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev queue-explore endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevExploreInput(req.body || {});
+    const result = await queueDevExploreAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: {
+        id: result.action.id,
+        type: 'dev_queue_explore',
+        status: result.action.status,
+        hours: result.hours,
+        spend: result.spend,
+        gain: result.gain,
+        requestedTick: result.requestedTick,
+        executeAfterTick: result.executeAfterTick,
+        durationTicks: result.durationTicks ?? null,
+        payload: result.action.payload,
+        result: result.action.result,
+      },
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+      },
+      message: 'Exploration queued.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'queue_explore_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -877,6 +926,26 @@ function normalizeDevTrainUnitsInput(body) {
   };
 }
 
+function normalizeDevExploreInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const rawHours = body.hours ?? body.exploreHours;
+  const hours = typeof rawHours === 'number' ? rawHours : Number(String(rawHours ?? '').trim());
+  if (!Number.isInteger(hours) || hours < 1) {
+    throw createServiceError(400, 'invalid_hours', 'Explore hours must be a whole number of at least 1.');
+  }
+  const rawSpend = body.spend ?? body.cards ?? body.money;
+  const spend = typeof rawSpend === 'number' ? rawSpend : Number(String(rawSpend ?? '').trim());
+  if (!Number.isInteger(spend) || spend < 1) {
+    throw createServiceError(400, 'invalid_spend', 'Explore spend must be a positive whole number.');
+  }
+  return {
+    ...identity,
+    hours,
+    spend,
+    idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
+  };
+}
+
 function normalizeDevManualTickInput(body) {
   const identity = normalizeDevIdentityInput(body);
   return {
@@ -1187,6 +1256,23 @@ function orderBarracksTrainingMultiplier(barracks) {
 function orderTrainingDurationSeconds(cost, barracks) {
   const fullSpeedSeconds = ((Number(cost) || 0) / 10862.90322580645) * 60;
   return fullSpeedSeconds * (4 / orderBarracksTrainingMultiplier(barracks));
+}
+
+// ── Explore reference port ────────────────────────────────────────────────────
+// estimateExploreGain (src/App.jsx): gain = max(1, floor(120 * sqrt(hours) *
+// sqrt(max(0.01, spend/1,000,000)) * sqrt(1000 / max(1000, land)) * scannerBonus)).
+// Scanners are not hosted state; scannerExploreMultiplier (src/App.jsx) returns
+// exactly 1 at zero scanners, so the bonus term is 1 BY DATA, not by
+// reinterpretation. Explore duration is hours * 3600 game-seconds (local
+// startExplore: finishAt = now + realMillisecondsForGameSeconds(hours * 3600)).
+// The local single-order-at-a-time rule is not enforced hosted-side, matching
+// the stacking behaviour already established for build and training orders.
+function orderExploreGain(hours, spend, landNow) {
+  const h = Math.max(1, Math.floor(Number(hours) || 0));
+  const cardFactor = Math.sqrt(Math.max(0.01, spend / 1000000));
+  const landPenalty = Math.sqrt(1000 / Math.max(1000, landNow));
+  const scannerBonus = 1;
+  return Math.max(1, Math.floor(120 * Math.sqrt(h) * cardFactor * landPenalty * scannerBonus));
 }
 
 function createServiceError(statusCode, code, message) {
@@ -2044,6 +2130,172 @@ async function queueDevTrainAction(actionInput) {
   };
 }
 
+async function queueDevExploreAction(actionInput) {
+  // Explorations must belong to a grant-linked player, like build and training.
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+
+  const hours = actionInput.hours;
+  const spend = actionInput.spend;
+  const idempotencyKey = actionInput.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existingAction = await fetchSingleRow(
+      'multiplayer_action_queue',
+      'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_queue_explore').eq('idempotency_key', idempotencyKey)
+    );
+
+    if (existingAction) {
+      return {
+        round: formatRound(round),
+        player: formatPlayer(player),
+        previousTick: Number(round.current_tick || 0),
+        requestedTick: Number(existingAction.requested_tick ?? round.current_tick ?? 0),
+        executeAfterTick: Number(existingAction.execute_after_tick ?? Number(round.current_tick || 0) + 1),
+        durationTicks: null,
+        hours: Number(existingAction.payload?.hours ?? hours),
+        spend: Number(existingAction.payload?.spend ?? spend),
+        gain: Number(existingAction.payload?.gain ?? 0),
+        action: formatActionQueue(existingAction),
+      };
+    }
+  }
+
+  const previousTick = Number(round.current_tick || 0);
+  const requestedTick = previousTick;
+
+  // Reference validation order (local startExplore): affordability first, then
+  // the land-doubling guard. The gain locks in at queue time from current land.
+  const stateResult = await getOrCreatePlayerState(round.id, player.id);
+  const stateRow = stateResult.row;
+  const availableMoney = Number(stateRow.money || 0);
+  if (availableMoney < spend) {
+    throw createServiceError(400, 'insufficient_funds', `Not enough money for that exploration: it costs ${spend} and ${availableMoney} is available.`);
+  }
+  const landAtQueue = Math.max(0, Number(stateRow.land || 0));
+  const gain = orderExploreGain(hours, spend, Math.max(1, landAtQueue));
+  if (gain > landAtQueue) {
+    throw createServiceError(400, 'explore_gain_exceeds_land', `Explore rejected: estimated return ${gain} land would more than double your empire. Maximum allowed return is your existing land: ${landAtQueue}.`);
+  }
+
+  const durationSeconds = hours * 3600;
+  const durationTicks = orderTicksFromGameSeconds(durationSeconds);
+  const executeAfterTick = previousTick + durationTicks;
+
+  const debitedAt = nowIso();
+  await updateSingleRow('multiplayer_player_state', {
+    money: availableMoney - spend,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: debitedAt,
+  }, (query) => query.eq('id', stateRow.id));
+  const refundDebit = async () => {
+    const freshState = await fetchSingleRow(
+      'multiplayer_player_state',
+      'id, player_id, round_id, state_version, money, created_at, updated_at',
+      (query) => query.eq('id', stateRow.id)
+    ).catch(() => null);
+    if (!freshState) return;
+    await updateSingleRow('multiplayer_player_state', {
+      money: Number(freshState.money || 0) + spend,
+      state_version: Number(freshState.state_version || 0) + 1,
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', stateRow.id)).catch(() => {});
+  };
+
+  const actionPayload = {
+    hours,
+    spend,
+    gain,
+    landAtQueue,
+  };
+  const queuedAt = nowIso();
+  let actionRow;
+  try {
+    actionRow = await insertSingleRow('multiplayer_action_queue', {
+      round_id: round.id,
+      player_id: player.id,
+      action_type: 'dev_queue_explore',
+      status: 'queued',
+      requested_tick: requestedTick,
+      execute_after_tick: executeAfterTick,
+      payload: actionPayload,
+      result: null,
+      error_message: null,
+      idempotency_key: idempotencyKey,
+      processed_at: null,
+      updated_at: queuedAt,
+    });
+  } catch (error) {
+    await refundDebit();
+    throw error;
+  }
+
+  try {
+    await insertSingleRow('multiplayer_round_events', {
+      round_id: round.id,
+      tick: requestedTick,
+      event_type: 'dev_order_queued',
+      visibility: 'public',
+      actor_player_id: player.id,
+      title: 'Exploration queued',
+      body: `${player.display_name} spent ${spend} money and sent scouts out to explore for ${hours} ${hours === 1 ? 'hour' : 'hours'}.`,
+      payload: {
+        actionQueueId: actionRow.id,
+        actionType: 'dev_queue_explore',
+        ...actionPayload,
+        requestedTick,
+        executeAfterTick,
+      },
+    });
+
+    await insertSingleRow('multiplayer_audit_log', {
+      round_id: round.id,
+      player_id: player.id,
+      actor_type: 'dev',
+      event_type: 'dev_queue_explore',
+      event_data: {
+        round_id: round.id,
+        round_key: round.round_key,
+        player_id: player.id,
+        display_name: player.display_name,
+        action_queue_id: actionRow.id,
+        action_type: 'dev_queue_explore',
+        hours,
+        spend,
+        gain,
+        land_at_queue: landAtQueue,
+        requested_tick: requestedTick,
+        execute_after_tick: executeAfterTick,
+      },
+    });
+  } catch (error) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unexpected queue-explore failure.',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    await refundDebit();
+    throw error;
+  }
+
+  return {
+    round: formatRound(round),
+    player: formatPlayer(player),
+    previousTick,
+    requestedTick,
+    executeAfterTick,
+    durationTicks,
+    hours,
+    spend,
+    gain,
+    action: {
+      ...actionRow,
+      payload: actionPayload,
+      result: null,
+    },
+  };
+}
+
 async function runManualDevTick(tickInput) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', tickInput.roundKey)
@@ -2184,6 +2436,7 @@ async function runManualDevTick(tickInput) {
 const DEV_SCREEN_ACTION_TYPES = {
   build: ['dev_queue_build_factory'],
   barracks: ['dev_queue_train_units'],
+  explore: ['dev_queue_explore'],
 };
 
 function normalizeDevCompleteDueInput(body) {
@@ -2289,9 +2542,54 @@ async function applyDueTrainOrder({ round, player, action, appliedAtTick }) {
   };
 }
 
+async function applyDueExploreOrder({ round, player, action, appliedAtTick }) {
+  const gain = Math.max(0, Math.floor(Number(action.payload?.gain || 0)));
+  const stateRow = await fetchSingleRow(
+    'multiplayer_player_state',
+    'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id)
+  );
+  if (!stateRow) {
+    throw createServiceError(404, 'player_state_not_found', 'Player state was not found for that exploration.');
+  }
+  const oldLand = Math.max(0, Number(stateRow.land || 0));
+  const newLand = oldLand + gain;
+  const processedAt = nowIso();
+  const actionResult = {
+    actionType: 'dev_queue_explore',
+    hours: Number(action.payload?.hours || 0),
+    spend: Number(action.payload?.spend || 0),
+    gain,
+    oldLand,
+    newLand,
+    tick: appliedAtTick,
+  };
+
+  await updateSingleRow('multiplayer_player_state', {
+    land: newLand,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: processedAt,
+  }, (query) => query.eq('id', stateRow.id));
+
+  return {
+    actionResult,
+    eventType: 'dev_explore_processed',
+    eventTitle: 'Exploration completed',
+    eventBody: `${player.display_name}'s scouts returned and found ${gain} land.`,
+    auditData: {
+      hours: actionResult.hours,
+      spend: actionResult.spend,
+      gain,
+      old_land: oldLand,
+      new_land: newLand,
+    },
+  };
+}
+
 const DEV_ORDER_APPLIERS = {
   dev_queue_build_factory: applyDueBuildOrder,
   dev_queue_train_units: applyDueTrainOrder,
+  dev_queue_explore: applyDueExploreOrder,
 };
 
 async function completeDueOrdersForPlayer(identity, screen) {
