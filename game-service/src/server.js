@@ -446,6 +446,57 @@ app.post('/api/dev/tick/manual-run', requireDevEndpoints, async (req, res) => {
   }
 });
 
+app.post('/api/dev/actions/queue-train-units', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev queue-train-units endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevTrainUnitsInput(req.body || {});
+    const result = await queueDevTrainAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: {
+        id: result.action.id,
+        type: 'dev_queue_train_units',
+        status: result.action.status,
+        unitSlot: result.unitSlot,
+        unitKey: result.unitKey,
+        unitName: result.unitName,
+        amount: result.amount,
+        cost: result.cost,
+        requestedTick: result.requestedTick,
+        executeAfterTick: result.executeAfterTick,
+        durationTicks: result.durationTicks ?? null,
+        payload: result.action.payload,
+        result: result.action.result,
+      },
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+      },
+      message: 'Training order queued.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'queue_train_units_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -804,6 +855,28 @@ function normalizeDevBuildFactoryInput(body) {
   };
 }
 
+function normalizeDevTrainUnitsInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const rawSlot = body.unitSlot ?? body.unit_slot;
+  const unitSlot = typeof rawSlot === 'number' ? rawSlot : Number(String(rawSlot ?? '').trim());
+  if (!Number.isInteger(unitSlot) || unitSlot < 1 || unitSlot > DEV_UNIT_SLOT_KEYS.length) {
+    throw createServiceError(400, 'invalid_unit_slot', `unitSlot must be an integer between 1 and ${DEV_UNIT_SLOT_KEYS.length}.`);
+  }
+  const rawAmount = body.amount;
+  const amount = rawAmount === undefined || rawAmount === null || String(rawAmount).trim() === ''
+    ? 1
+    : (typeof rawAmount === 'number' ? rawAmount : Number(String(rawAmount).trim()));
+  if (!Number.isInteger(amount) || amount < 1) {
+    throw createServiceError(400, 'invalid_amount', 'Training amount must be a positive integer.');
+  }
+  return {
+    ...identity,
+    unitSlot,
+    amount,
+    idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
+  };
+}
+
 function normalizeDevManualTickInput(body) {
   const identity = normalizeDevIdentityInput(body);
   return {
@@ -1071,6 +1144,49 @@ function orderConstructionDurationSeconds(cost, factories) {
 }
 function orderTicksFromGameSeconds(seconds) {
   return Math.max(1, Math.ceil((Number(seconds) || 0) / ORDER_TICK_GAME_SECONDS));
+}
+
+// ── Training reference port ───────────────────────────────────────────────────
+// Verbatim from src/gameData.js `races`: per-race maxTrain (the per-order
+// training cap without speed minerals — src/speciesBonuses.js
+// effectiveMaxTrainForRow base) and the six unit classes with off/def/cost.
+// Army storage is race-agnostic slot rows (unit_1..unit_6); the race is resolved
+// at read time from multiplayer_player_state.race_key with the reference
+// fallback (races[raceKey] || races.human). returning_count is dormant: combat
+// returns survivors immediately in this game's model, so it belongs to the
+// future combat slice and stays zero here.
+const DEV_UNIT_SLOT_KEYS = ['unit_1', 'unit_2', 'unit_3', 'unit_4', 'unit_5', 'unit_6'];
+const DEV_RACE_UNIT_STATS = {
+  lithi: { name: "Li'thi", maxTrain: 1999, unitStats: [
+    { name: 'Laveti', off: 3, def: 3, cost: 6 }, { name: "Orph'irges", off: 8, def: 6, cost: 14 }, { name: 'Missile tanks', off: 241, def: 220, cost: 461 }, { name: 'Soul Divers', off: 165, def: 180, cost: 345 }, { name: 'Incabusers', off: 267, def: 292, cost: 559 }, { name: 'Black parroths', off: 686, def: 661, cost: 1347 },
+  ] },
+  human: { name: 'Human', maxTrain: 1299, unitStats: [
+    { name: 'Troopers', off: 2, def: 2, cost: 4 }, { name: 'Laser Tanks', off: 117, def: 128, cost: 245 }, { name: 'Missile Forces', off: 17, def: 17, cost: 34 }, { name: 'Shuttles', off: 328, def: 310, cost: 638 }, { name: 'Star cruisers', off: 645, def: 662, cost: 1307 }, { name: 'Air forces', off: 399, def: 448, cost: 847 },
+  ] },
+  zarth: { name: 'Zarth', maxTrain: 2499, unitStats: [
+    { name: 'Nemesi', off: 4, def: 4, cost: 8 }, { name: 'Flying parroths', off: 25, def: 23, cost: 48 }, { name: 'Zolanith', off: 53, def: 48, cost: 101 }, { name: 'Poiteruns', off: 249, def: 215, cost: 464 }, { name: 'Zovotor', off: 264, def: 238, cost: 502 }, { name: "P'inska", off: 331, def: 293, cost: 624 },
+  ] },
+  trysaur: { name: 'Trysaur', maxTrain: 1749, unitStats: [
+    { name: 'Arphages', off: 3, def: 3, cost: 6 }, { name: "In'aburs", off: 132, def: 136, cost: 268 }, { name: 'Implatinons', off: 113, def: 110, cost: 223 }, { name: 'Fortavi', off: 227, def: 221, cost: 448 }, { name: 'Pascortha', off: 187, def: 197, cost: 384 }, { name: 'Silvato', off: 839, def: 822, cost: 1661 },
+  ] },
+  relu: { name: "Re'lu", maxTrain: 2499, unitStats: [
+    { name: 'Ithica', off: 9, def: 8, cost: 17 }, { name: "Posi'stra", off: 40, def: 38, cost: 78 }, { name: "Eph'fo", off: 108, def: 110, cost: 218 }, { name: 'Ahtribio', off: 231, def: 225, cost: 456 }, { name: 'Aourthi', off: 269, def: 268, cost: 537 }, { name: "Pa'sik", off: 568, def: 559, cost: 1127 },
+  ] },
+};
+function devRaceUnitStats(raceKey) {
+  return DEV_RACE_UNIT_STATS[normalizeText(String(raceKey || '')).toLowerCase()] || DEV_RACE_UNIT_STATS.human;
+}
+function orderBarracksTrainingMultiplier(barracks) {
+  const b = Math.max(0, Number(barracks) || 0);
+  if (b <= 1000) return 1 + b / 1000;
+  if (b <= 4000) return 2 + ((b - 1000) / 3000) * 2;
+  return 4;
+}
+// trainingDurationSeconds (src/gameMath.js) with the species/speed-mineral
+// divider at its neutral reference value 1 (no hosted species bonuses yet).
+function orderTrainingDurationSeconds(cost, barracks) {
+  const fullSpeedSeconds = ((Number(cost) || 0) / 10862.90322580645) * 60;
+  return fullSpeedSeconds * (4 / orderBarracksTrainingMultiplier(barracks));
 }
 
 function createServiceError(statusCode, code, message) {
@@ -1707,6 +1823,227 @@ async function queueDevFactoryAction(actionInput) {
   };
 }
 
+async function queueDevTrainAction(actionInput) {
+  // Training orders must belong to a grant-linked player, like build orders.
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+
+  const unitSlot = actionInput.unitSlot;
+  const unitKey = DEV_UNIT_SLOT_KEYS[unitSlot - 1];
+  const amount = actionInput.amount;
+  const idempotencyKey = actionInput.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existingAction = await fetchSingleRow(
+      'multiplayer_action_queue',
+      'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_queue_train_units').eq('idempotency_key', idempotencyKey)
+    );
+
+    if (existingAction) {
+      return {
+        round: formatRound(round),
+        player: formatPlayer(player),
+        previousTick: Number(round.current_tick || 0),
+        requestedTick: Number(existingAction.requested_tick ?? round.current_tick ?? 0),
+        executeAfterTick: Number(existingAction.execute_after_tick ?? Number(round.current_tick || 0) + 1),
+        durationTicks: null,
+        amount: Number(existingAction.payload?.amount ?? amount),
+        unitSlot: Number(existingAction.payload?.unitSlot ?? unitSlot),
+        unitKey: existingAction.payload?.unitKey || unitKey,
+        unitName: existingAction.payload?.unitName || null,
+        cost: Number(existingAction.payload?.cost ?? 0),
+        action: formatActionQueue(existingAction),
+      };
+    }
+  }
+
+  const previousTick = Number(round.current_tick || 0);
+  const requestedTick = previousTick;
+
+  // Race resolves at read time from canonical state; costs/caps come from the
+  // reference unit tables for that race.
+  const stateResult = await getOrCreatePlayerState(round.id, player.id);
+  const stateRow = stateResult.row;
+  const race = devRaceUnitStats(stateRow.race_key);
+  if (amount > race.maxTrain) {
+    throw createServiceError(400, 'train_cap_exceeded', `Training orders for ${race.name} are capped at ${race.maxTrain} units per order.`);
+  }
+  const unit = race.unitStats[unitSlot - 1];
+  const cost = unit.cost * amount;
+  const availableMoney = Number(stateRow.money || 0);
+  if (availableMoney < cost) {
+    throw createServiceError(400, 'insufficient_funds', `Not enough money for that training order: it costs ${cost} and ${availableMoney} is available.`);
+  }
+
+  // Real training duration from the reference formula: barracks accelerate it.
+  const barracksRows = await fetchRows(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'barracks')
+  );
+  const barracksCount = canonicalCountFromRows(barracksRows);
+  const durationSeconds = orderTrainingDurationSeconds(cost, barracksCount);
+  const durationTicks = orderTicksFromGameSeconds(durationSeconds);
+  const executeAfterTick = previousTick + durationTicks;
+
+  const debitedAt = nowIso();
+  await updateSingleRow('multiplayer_player_state', {
+    money: availableMoney - cost,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: debitedAt,
+  }, (query) => query.eq('id', stateRow.id));
+  const refundDebit = async () => {
+    const freshState = await fetchSingleRow(
+      'multiplayer_player_state',
+      'id, player_id, round_id, state_version, money, created_at, updated_at',
+      (query) => query.eq('id', stateRow.id)
+    ).catch(() => null);
+    if (!freshState) return;
+    await updateSingleRow('multiplayer_player_state', {
+      money: Number(freshState.money || 0) + cost,
+      state_version: Number(freshState.state_version || 0) + 1,
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', stateRow.id)).catch(() => {});
+  };
+
+  // Pending training is visible immediately via training_count on the slot row;
+  // the standing count only moves when the finished order is completed on the
+  // Barracks screen.
+  const unitRow = await fetchSingleRow(
+    'multiplayer_player_armies',
+    'id, player_id, round_id, unit_key, count, training_count, returning_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('unit_key', unitKey)
+  );
+  const existingCount = Math.max(0, Math.floor(Number(unitRow?.count ?? 0)));
+  const existingTraining = Math.max(0, Math.floor(Number(unitRow?.training_count ?? 0)));
+  const existingReturning = Math.max(0, Math.floor(Number(unitRow?.returning_count ?? 0)));
+  await upsertRow('multiplayer_player_armies', {
+    round_id: round.id,
+    player_id: player.id,
+    unit_key: unitKey,
+    count: existingCount,
+    training_count: existingTraining + amount,
+    returning_count: existingReturning,
+    updated_at: debitedAt,
+  }, 'player_id,round_id,unit_key');
+  const rollbackTraining = async () => {
+    const freshRow = await fetchSingleRow(
+      'multiplayer_player_armies',
+      'id, player_id, round_id, unit_key, count, training_count, returning_count, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('unit_key', unitKey)
+    ).catch(() => null);
+    if (!freshRow) return;
+    await upsertRow('multiplayer_player_armies', {
+      round_id: round.id,
+      player_id: player.id,
+      unit_key: unitKey,
+      count: Math.max(0, Math.floor(Number(freshRow.count || 0))),
+      training_count: Math.max(0, Math.floor(Number(freshRow.training_count || 0)) - amount),
+      returning_count: Math.max(0, Math.floor(Number(freshRow.returning_count || 0))),
+      updated_at: nowIso(),
+    }, 'player_id,round_id,unit_key').catch(() => {});
+  };
+
+  const actionPayload = {
+    unitSlot,
+    unitKey,
+    unitName: unit.name,
+    raceKey: normalizeText(String(stateRow.race_key || 'human')).toLowerCase() || 'human',
+    amount,
+    cost,
+  };
+  const queuedAt = nowIso();
+  let actionRow;
+  try {
+    actionRow = await insertSingleRow('multiplayer_action_queue', {
+      round_id: round.id,
+      player_id: player.id,
+      action_type: 'dev_queue_train_units',
+      status: 'queued',
+      requested_tick: requestedTick,
+      execute_after_tick: executeAfterTick,
+      payload: actionPayload,
+      result: null,
+      error_message: null,
+      idempotency_key: idempotencyKey,
+      processed_at: null,
+      updated_at: queuedAt,
+    });
+  } catch (error) {
+    await rollbackTraining();
+    await refundDebit();
+    throw error;
+  }
+
+  try {
+    await insertSingleRow('multiplayer_round_events', {
+      round_id: round.id,
+      tick: requestedTick,
+      event_type: 'dev_order_queued',
+      visibility: 'public',
+      actor_player_id: player.id,
+      title: 'Training order queued',
+      body: `${player.display_name} queued training for ${amount} ${unit.name}.`,
+      payload: {
+        actionQueueId: actionRow.id,
+        actionType: 'dev_queue_train_units',
+        ...actionPayload,
+        requestedTick,
+        executeAfterTick,
+      },
+    });
+
+    await insertSingleRow('multiplayer_audit_log', {
+      round_id: round.id,
+      player_id: player.id,
+      actor_type: 'dev',
+      event_type: 'dev_queue_train_units',
+      event_data: {
+        round_id: round.id,
+        round_key: round.round_key,
+        player_id: player.id,
+        display_name: player.display_name,
+        action_queue_id: actionRow.id,
+        action_type: 'dev_queue_train_units',
+        unit_slot: unitSlot,
+        unit_key: unitKey,
+        amount,
+        cost,
+        requested_tick: requestedTick,
+        execute_after_tick: executeAfterTick,
+      },
+    });
+  } catch (error) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unexpected queue-train-units failure.',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    await rollbackTraining();
+    await refundDebit();
+    throw error;
+  }
+
+  return {
+    round: formatRound(round),
+    player: formatPlayer(player),
+    previousTick,
+    requestedTick,
+    executeAfterTick,
+    durationTicks,
+    amount,
+    unitSlot,
+    unitKey,
+    unitName: unit.name,
+    cost,
+    action: {
+      ...actionRow,
+      payload: actionPayload,
+      result: null,
+    },
+  };
+}
+
 async function runManualDevTick(tickInput) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', tickInput.roundKey)
@@ -1901,8 +2238,60 @@ async function applyDueBuildOrder({ round, player, action, appliedAtTick }) {
   };
 }
 
+async function applyDueTrainOrder({ round, player, action, appliedAtTick }) {
+  const unitSlot = Math.max(1, Math.min(DEV_UNIT_SLOT_KEYS.length, Math.floor(Number(action.payload?.unitSlot || 1))));
+  const unitKey = action.payload?.unitKey || DEV_UNIT_SLOT_KEYS[unitSlot - 1];
+  const amount = Math.max(0, Math.floor(Number(action.payload?.amount || 0)));
+  const unitName = action.payload?.unitName || unitKey;
+  const unitRow = await fetchSingleRow(
+    'multiplayer_player_armies',
+    'id, player_id, round_id, unit_key, count, training_count, returning_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('unit_key', unitKey)
+  );
+  const oldCount = Math.max(0, Math.floor(Number(unitRow?.count ?? 0)));
+  const oldTraining = Math.max(0, Math.floor(Number(unitRow?.training_count ?? 0)));
+  const returningCount = Math.max(0, Math.floor(Number(unitRow?.returning_count ?? 0)));
+  const newCount = oldCount + amount;
+  const processedAt = nowIso();
+  const actionResult = {
+    actionType: 'dev_queue_train_units',
+    unitSlot,
+    unitKey,
+    unitName,
+    amount,
+    oldCount,
+    newCount,
+    tick: appliedAtTick,
+  };
+
+  await upsertRow('multiplayer_player_armies', {
+    round_id: round.id,
+    player_id: player.id,
+    unit_key: unitKey,
+    count: newCount,
+    training_count: Math.max(0, oldTraining - amount),
+    returning_count: returningCount,
+    updated_at: processedAt,
+  }, 'player_id,round_id,unit_key');
+
+  return {
+    actionResult,
+    eventType: 'dev_train_units_processed',
+    eventTitle: 'Training order completed',
+    eventBody: `${player.display_name} completed training for ${amount} ${unitName}.`,
+    auditData: {
+      unit_slot: unitSlot,
+      unit_key: unitKey,
+      amount,
+      old_count: oldCount,
+      new_count: newCount,
+    },
+  };
+}
+
 const DEV_ORDER_APPLIERS = {
   dev_queue_build_factory: applyDueBuildOrder,
+  dev_queue_train_units: applyDueTrainOrder,
 };
 
 async function completeDueOrdersForPlayer(identity, screen) {
@@ -2767,10 +3156,10 @@ async function getOrCreatePlayerBuildings(roundId, playerId) {
 }
 
 async function getOrCreatePlayerArmies(roundId, playerId) {
-  const expectedRows = [
-    { unit_key: 'infantry', count: 0 },
-    { unit_key: 'defense', count: 0 },
-  ];
+  // Six race-agnostic unit slots; the race resolves at read time from
+  // multiplayer_player_state.race_key. Legacy infantry/defense rows from the
+  // earlier proof are left in place and ignored by slot-based readers.
+  const expectedRows = DEV_UNIT_SLOT_KEYS.map((unitKey) => ({ unit_key: unitKey, count: 0 }));
   const existing = await fetchRows('multiplayer_player_armies', 'id, player_id, round_id, unit_key, count, training_count, returning_count, created_at, updated_at', (query) =>
     query.eq('round_id', roundId).eq('player_id', playerId)
   );
@@ -3062,11 +3451,19 @@ function normalizeHostedArmySummary(rows = []) {
     };
   };
 
+  const slots = DEV_UNIT_SLOT_KEYS.map((unitKey, index) => ({
+    unitSlot: index + 1,
+    unitKey,
+    ...summaryForKey(unitKey),
+  }));
+
   return {
     rows: formatArmyRows(rows),
+    slots,
     byKey: {
       infantry: summaryForKey('infantry'),
       defense: summaryForKey('defense'),
+      ...Object.fromEntries(slots.map((slot) => [slot.unitKey, { count: slot.count, trainingCount: slot.trainingCount, returningCount: slot.returningCount }])),
     },
     counts: {
       infantry: summaryForKey('infantry').count,
