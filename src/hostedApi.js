@@ -25,6 +25,7 @@ export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 // is surfaced as an error instead of silently misreported as success.
 export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
 export const HOSTED_QUEUE_TRAIN_ENDPOINT = "/api/dev/actions/queue-train-units";
+export const HOSTED_QUEUE_EXPLORE_ENDPOINT = "/api/dev/actions/queue-explore";
 // Orders finish after a real duration (in round ticks) but only apply when the
 // player visits the matching screen; the visit calls this endpoint.
 export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
@@ -158,6 +159,10 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "train_cap_exceeded") return "That training order exceeds the per-order cap for your species.";
   if (errorCode === "invalid_screen") return "That completion screen is not supported by the hosted game service.";
   if (errorCode === "queue_train_units_failed") return "The training order could not be queued.";
+  if (errorCode === "invalid_hours") return "Enter a whole number of explore hours.";
+  if (errorCode === "invalid_spend") return "Enter how much money to spend on exploring.";
+  if (errorCode === "explore_gain_exceeds_land") return "Explore rejected: the estimated return would exceed your existing land.";
+  if (errorCode === "queue_explore_failed") return "The exploration could not be queued.";
   if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

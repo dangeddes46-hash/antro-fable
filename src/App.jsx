@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -1517,6 +1517,11 @@ export default function App() {
   const [hostedRoundState, setHostedRoundState] = useState({ loading: false, error: "", message: "", fetchedAt: null, summary: null });
   const [activeGameMode, setActiveGameMode] = useState("local");
   const [hostedDiagnosticsOpen, setHostedDiagnosticsOpen] = useState(false);
+  // Hosted-only exploration drafts (same defaults as the local Explore page).
+  // Deliberately NOT part of currentSavePayload/autosave: hosted UI state never
+  // enters browser-local saves.
+  const [hostedExploreHours, setHostedExploreHours] = useState("24");
+  const [hostedExploreSpend, setHostedExploreSpend] = useState("1000000");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2585,6 +2590,25 @@ export default function App() {
       },
     });
   }
+  async function submitHostedDevQueueExplore() {
+    const hours = Math.floor(Number(hostedExploreHours) || 0);
+    const spend = Math.floor(Number(hostedExploreSpend) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_QUEUE_EXPLORE_ENDPOINT,
+      actionType: "hosted_queue_explore",
+      requestBody: buildQueueExploreBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, hours, spend }),
+      successMessage: "Exploration queued for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+      validateResult: (result) => {
+        const confirmedHours = Number(result?.action?.hours ?? result?.action?.payload?.hours ?? 0);
+        const confirmedSpend = Number(result?.action?.spend ?? result?.action?.payload?.spend ?? 0);
+        if ((confirmedHours && confirmedHours !== hours) || (confirmedSpend && confirmedSpend !== spend)) {
+          return `The hosted game service recorded an exploration for ${confirmedHours} hours / ${confirmedSpend} money instead of the requested ${hours} hours / ${spend} money. It is likely running an older build - redeploy the game-service before queueing explorations.`;
+        }
+        return null;
+      },
+    });
+  }
   async function submitHostedCompleteDueOrders(screen) {
     return submitMultiplayerDevAction({
       endpointPath: HOSTED_COMPLETE_DUE_ENDPOINT,
@@ -2744,7 +2768,7 @@ export default function App() {
   // object and must not re-trigger completion.
   useEffect(() => {
     if (!hydrated || activeGameMode !== "hosted" || !hostedRoundState.summary) return;
-    if (page !== "build" && page !== "barracks") return;
+    if (page !== "build" && page !== "barracks" && page !== "explore") return;
     submitHostedCompleteDueOrders(page);
   }, [hydrated, activeGameMode, page, Boolean(hostedRoundState.summary)]);
 
@@ -5197,6 +5221,49 @@ export default function App() {
     </div>;
   }
 
+  function renderHostedExplorePage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("explore");
+    const exploreHoursValue = Math.floor(Number(hostedExploreHours) || 0);
+    const exploreSpendValue = Math.floor(Number(hostedExploreSpend) || 0);
+    const estimatedGain = exploreHoursValue > 0 && exploreSpendValue > 0 ? hostedExploreEstimate(exploreHoursValue, exploreSpendValue, Math.max(1, hosted.land)) : 0;
+    return <div className="grid gap-4">
+      <Panel title="Explore">
+        <p className="mb-3 text-orange-200">Hosted DEV Explore sends scouts for canonical server land. Explorations take real time; finished explorations complete when you visit this screen.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Round status", hosted.roundStatus],
+          ["Current tick", hosted.currentTick],
+          ["Land", fmt(Math.max(0, Math.floor(hosted.land)))],
+          ["Money", fmt(Math.max(0, Math.floor(hosted.money)))],
+          ["Queued orders", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+          ["Orders ready to complete", fmt(Math.max(0, Math.floor(hosted.dueNowCount)))],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        <h3 className="mt-4 mb-1 text-orange-300 font-bold">Exploration</h3>
+        <p className="mb-2 text-xs text-orange-600">The estimated return uses the reference formula; the hosted game-service locks the authoritative gain when the exploration is queued.</p>
+        <OldTable rows={[
+          ["Explore hours", <TextInput key="hours" value={hostedExploreHours} onChange={(v) => setHostedExploreHours(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-24" />],
+          ["Money spend", <TextInput key="spend" value={hostedExploreSpend} onChange={(v) => setHostedExploreSpend(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-32" />],
+          ["Estimated land return", fmt(estimatedGain)],
+        ]} />
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueExplore} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId || exploreHoursValue <= 0 || exploreSpendValue <= 0}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_explore" ? "Queuing exploration..." : "Start Exploration"}</button>
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
   function renderDestroy() {
     const requested = Object.fromEntries(Object.entries(destroyForm).map(([id, value]) => [id, parseQty(value)]));
     const destroyQty = totalBuildings(requested);
@@ -5204,6 +5271,7 @@ export default function App() {
   }
 
   function renderExplore() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedExplorePage();
     const notice = renderCompletionNotice("explore");
     if (notice) return notice;
     if (player.exploreOrder?.finishAt && !isFinishDue(player.exploreOrder.finishAt, displayNow)) return renderPendingOrderPanel(pageLabel("explore"), "exploration", player.exploreOrder.finishAt, cancelExploreOrder);
@@ -7123,6 +7191,7 @@ export default function App() {
       if (page === "status") return renderStatus();
       if (page === "build") return renderBuild();
       if (page === "barracks") return renderBarracks();
+      if (page === "explore") return renderExplore();
       if (page === "todo") return renderHostedDiagnosticsPanel();
       return renderHostedPageUnavailable(page);
     }

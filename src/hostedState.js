@@ -67,6 +67,22 @@ export function buildCompleteDueBody({ hostedSummary, testerAccessRecord, screen
     screen,
   };
 }
+export function buildQueueExploreBody({ hostedSummary, testerAccessRecord, hours, spend }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    hours,
+    spend,
+  };
+}
+// Display-only mirror of the server's explore gain (estimateExploreGain,
+// src/App.jsx, scanner bonus 1 — no hosted scanners). The server recomputes and
+// locks the authoritative gain at queue time.
+export function hostedExploreEstimate(hours, spend, landNow) {
+  const h = Math.max(1, Math.floor(Number(hours) || 0));
+  const cardFactor = Math.sqrt(Math.max(0.01, (Number(spend) || 0) / 1000000));
+  const landPenalty = Math.sqrt(1000 / Math.max(1000, Number(landNow) || 0));
+  return Math.max(1, Math.floor(120 * Math.sqrt(h) * cardFactor * landPenalty));
+}
 // Six race-agnostic unit slots from the hosted armies summary, labelled with the
 // reference unit names for the player's race (races[raceKey] || races.human).
 export function hostedArmyRows(armies, raceKey) {
