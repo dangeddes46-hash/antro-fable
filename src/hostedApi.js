@@ -24,6 +24,10 @@ export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 // stale deployment that still coerces every order to "factory" (v0.43.1 behaviour)
 // is surfaced as an error instead of silently misreported as success.
 export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
+export const HOSTED_QUEUE_TRAIN_ENDPOINT = "/api/dev/actions/queue-train-units";
+// Orders finish after a real duration (in round ticks) but only apply when the
+// player visits the matching screen; the visit calls this endpoint.
+export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
 export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs", "nutrition_suppliers", "water_purifiers", "power_plants"];
 export const HOSTED_BUILDING_LABELS = {
   living_area: "Living Area",
@@ -149,7 +153,12 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "invite_grant_not_active") return "This invite grant exists but is not active. Create or redeem a fresh unused invite token.";
   if (errorCode === "invalid_amount") return "Factory build amount must be an integer between 1 and 10.";
   if (errorCode === "invalid_building_key") return "The hosted game service rejected that building type.";
-  if (errorCode === "insufficient_funds") return "Not enough money for that build order.";
+  if (errorCode === "insufficient_funds") return "Not enough money for that order.";
+  if (errorCode === "invalid_unit_slot") return "That unit slot is not valid.";
+  if (errorCode === "train_cap_exceeded") return "That training order exceeds the per-order cap for your species.";
+  if (errorCode === "invalid_screen") return "That completion screen is not supported by the hosted game service.";
+  if (errorCode === "queue_train_units_failed") return "The training order could not be queued.";
+  if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;
   if (errorCode === "player_not_joined") return `${playerLabel} is not joined to the shared round.`;

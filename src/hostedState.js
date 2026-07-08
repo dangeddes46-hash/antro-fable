@@ -54,6 +54,35 @@ export function buildQueueBuildOrderBody({ hostedSummary, testerAccessRecord, bu
     amount,
   };
 }
+export function buildQueueTrainOrderBody({ hostedSummary, testerAccessRecord, unitSlot, amount = 1 }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    unitSlot,
+    amount,
+  };
+}
+export function buildCompleteDueBody({ hostedSummary, testerAccessRecord, screen }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    screen,
+  };
+}
+// Six race-agnostic unit slots from the hosted armies summary, labelled with the
+// reference unit names for the player's race (races[raceKey] || races.human).
+export function hostedArmyRows(armies, raceKey) {
+  const race = races[raceKey] || races.human;
+  const slots = Array.isArray(armies?.slots) ? armies.slots : [];
+  return race.unitStats.map((unit, index) => {
+    const slot = slots.find((s) => Number(s.unitSlot) === index + 1) || armies?.byKey?.[`unit_${index + 1}`] || {};
+    return {
+      unitSlot: index + 1,
+      unitKey: `unit_${index + 1}`,
+      label: unit.name,
+      count: Math.max(0, Math.floor(Number(slot.count ?? 0))),
+      trainingCount: Math.max(0, Math.floor(Number(slot.trainingCount ?? 0))),
+    };
+  });
+}
 export function hostedBuildingRows(buildings) {
   const byKey = buildings && typeof buildings === "object" && buildings.byKey && typeof buildings.byKey === "object" ? buildings.byKey : {};
   const orderedKeys = [
@@ -168,6 +197,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const roundName = round?.roundName || "Shared Multiplayer DEV";
   const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
   const buildingRows = hostedBuildingRows(buildings);
+  const armyRows = hostedArmyRows(armies, raceKey);
   const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
   const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
   const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
@@ -210,6 +240,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     roundName,
     roundStatus,
     buildingRows,
+    armyRows,
     factoryCount,
     queuedCount,
     processedCount,

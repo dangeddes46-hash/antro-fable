@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -2569,6 +2569,31 @@ export default function App() {
   async function submitHostedDevQueueBuildFactory() {
     return submitHostedDevQueueBuildOrder("factory");
   }
+  async function submitHostedDevQueueTrainUnits(unitSlot) {
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_QUEUE_TRAIN_ENDPOINT,
+      actionType: `hosted_queue_train_${unitSlot}`,
+      requestBody: buildQueueTrainOrderBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, unitSlot, amount: 1 }),
+      successMessage: "Training order queued for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+      validateResult: (result) => {
+        const confirmedSlot = Number(result?.action?.unitSlot ?? result?.action?.payload?.unitSlot ?? 0);
+        if (confirmedSlot && confirmedSlot !== unitSlot) {
+          return `The hosted game service recorded a training order for unit slot ${confirmedSlot} instead of slot ${unitSlot}. It is likely running an older build - redeploy the game-service before queueing training orders.`;
+        }
+        return null;
+      },
+    });
+  }
+  async function submitHostedCompleteDueOrders(screen) {
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_COMPLETE_DUE_ENDPOINT,
+      actionType: `hosted_complete_due_${screen}`,
+      requestBody: buildCompleteDueBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, screen }),
+      successMessage: "Finished orders completed.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
   async function submitHostedDevManualTick() {
     return submitMultiplayerDevAction({
       endpointPath: "/api/dev/tick/manual-run",
@@ -2713,6 +2738,15 @@ export default function App() {
     refreshMultiplayerIdentity();
     refreshMultiplayerPreview();
   }, [hydrated, testerAccessRecord?.accepted, testerAccessRecord?.accessMode, testerAccessRecord?.accessGrant?.grantId, testerAccessRecord?.accessGrant?.testerLabel, testerAccessRecord?.testerLabel]);
+  // Visiting the hosted Build/Barracks screen explicitly completes that screen's
+  // finished orders, mirroring the local prototype's page-visit completion. The
+  // summary dependency is boolean on purpose: refreshes replace the summary
+  // object and must not re-trigger completion.
+  useEffect(() => {
+    if (!hydrated || activeGameMode !== "hosted" || !hostedRoundState.summary) return;
+    if (page !== "build" && page !== "barracks") return;
+    submitHostedCompleteDueOrders(page);
+  }, [hydrated, activeGameMode, page, Boolean(hostedRoundState.summary)]);
 
   useEffect(() => { if (!hydrated) return; const payload = currentSavePayload(); safeWriteSave(payload); if (activeRoundSlotKey) safeWriteRoundSlot(activeRoundSlotKey, roundSlotPayload(activeRoundSlotKey)); }, [hydrated, activeRoundSlotKey, playerNameSetupComplete, entryStage, selectedRoundKey, selectedSpeciesKey, glwSeedMode, glwRaceRegistered, page, adminMode, displayModel, log, worldReports, buildForm, trainForm, mineAllocation, factoryAllocation, buildSpeedFactor, useBarracksSpeedMinerals, pageCompletionNotice, scienceOrder, scienceLevels, roundProfile, roundSettings, gameName, roundStartedAt, selectedTargetName, disableTargetTurrets, spyTarget, spies, mercenaries, alliance, shareAllianceProfile, allianceShareEnabledMembers, allianceAnnouncementDraft, allianceSubPage, donateAllianceLandAmount, allianceBankBuildQty, allianceBankSpeedFactor, allianceBankDepositAmount, lrcCardsAmount, lrcEnergyAmount, lrcMineralName, lrcMineralAmount, lrcTargetType, lrcTargetName, activeLrcSequence, exploreHours, exploreCards, newsFilter, newsPage, battleLogPage, battleLogOpponent, botDifficulty, onlineSort, nexusMineralName, nexusMineralAmount, demoMemberName, diplomacyTargetType, diplomacyTargetName, activeWars, alliedStatuses, diplomacyRequests, retalRecords, grievances, battleReport, lastUpdateSummary, outgoingMissiles, incomingMissiles, messages, marketOrders, processedBattleKeys, player, demoOpponents]);
 
@@ -5062,6 +5096,7 @@ export default function App() {
       ["Population", fmt(Math.max(0, Math.floor(hosted.population)))],
       ["Factories", fmt(Math.max(0, Math.floor(hosted.factoryCount)))],
       ["Queued actions", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+      ["Orders ready to complete", fmt(Math.max(0, Math.floor(hosted.dueNowCount)))],
       ["Processed actions", fmt(Math.max(0, Math.floor(hosted.processedCount)))],
       ["Other players", hosted.otherPlayerSummary],
       ["Last hosted refresh", hosted.lastFetchLabel],
@@ -5100,6 +5135,7 @@ export default function App() {
           ["Current tick", hosted.currentTick],
           ["Current factories", fmt(Math.max(0, Math.floor(hosted.factoryCount)))],
           ["Queued factory builds", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+          ["Orders ready to complete", fmt(Math.max(0, Math.floor(hosted.dueNowCount)))],
           ["Processed builds", fmt(Math.max(0, Math.floor(hosted.processedCount)))],
           ["Other players", hosted.otherPlayerSummary],
           ["Last hosted refresh", hosted.lastFetchLabel],
@@ -5114,6 +5150,43 @@ export default function App() {
         {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
         <div className="flex flex-wrap gap-2 mt-4">
           <button className="classic-btn antro-action-btn" onClick={submitHostedDevQueueBuildFactory} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_queue_build_factory" ? "Queuing +1 factory..." : "Queue +1 Factory"}</button>
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
+  function renderHostedBarracksPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("barracks");
+    return <div className="grid gap-4">
+      <Panel title="Barracks">
+        <p className="mb-3 text-orange-200">Hosted DEV Barracks trains canonical server units. Training orders take real time; finished orders complete when you visit this screen.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Round status", hosted.roundStatus],
+          ["Current tick", hosted.currentTick],
+          ["Species", hosted.raceLabel || "Unknown"],
+          ["Queued orders", fmt(Math.max(0, Math.floor(hosted.queuedCount)))],
+          ["Orders ready to complete", fmt(Math.max(0, Math.floor(hosted.dueNowCount)))],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        <h3 className="mt-4 mb-1 text-orange-300 font-bold">Training Orders</h3>
+        <p className="mb-2 text-xs text-orange-600">Canonical unit counts come from the hosted game-service. Units in training join the standing army when their finished order completes on this screen.</p>
+        <OldTable rows={hosted.armyRows.map((row) => [row.label, <span key={row.unitKey} className="inline-flex items-center gap-2">
+          <span>{fmt(row.count)}{row.trainingCount > 0 ? ` (+${fmt(row.trainingCount)} training)` : ""}</span>
+          <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevQueueTrainUnits(row.unitSlot)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === `hosted_queue_train_${row.unitSlot}` ? `Training +1 ${row.label}...` : `Train +1 ${row.label}`}</button>
+        </span>])} />
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
           <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
           <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
           <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
@@ -5154,6 +5227,7 @@ export default function App() {
   }
 
   function renderBarracks() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedBarracksPage();
     const notice = renderCompletionNotice("barracks");
     if (notice) return notice;
     const pendingTrainingPanel = player.trainOrder?.finishAt && !isFinishDue(player.trainOrder.finishAt, displayNow) ? renderPendingOrderPanel(pageLabel("barracks"), "training", player.trainOrder.finishAt, cancelTrainingOrder) : null;
@@ -7048,6 +7122,7 @@ export default function App() {
     if (activeGameMode === "hosted" && hostedRoundState.summary) {
       if (page === "status") return renderStatus();
       if (page === "build") return renderBuild();
+      if (page === "barracks") return renderBarracks();
       if (page === "todo") return renderHostedDiagnosticsPanel();
       return renderHostedPageUnavailable(page);
     }
