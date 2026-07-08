@@ -178,6 +178,22 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   wording-mode/species dependent and deferred with the species-selection slice;
   all hosted durations use their neutral reference values, documented in code.
 
+## 3f. Slice 5 status (Explore) — done
+
+- Explore is the fourth screen on the shared due-order mechanism — no new
+  plumbing, one applier + one screen-map entry + one queue endpoint. Gain is
+  the verbatim reference formula (estimateExploreGain; scanner bonus exactly 1
+  at zero scanners by the reference curve — scanners are not hosted state);
+  duration is hours x 3600 game-seconds (2 ticks per hour); reference
+  validation order preserved (invalid_hours / invalid_spend /
+  insufficient_funds / explore_gain_exceeds_land, gain locked at queue time).
+  Completion on the Explore screen adds the locked gain to state.land.
+  Verified: gain/duration oracles exact, finished-not-applied across ticks,
+  three-way screen isolation (build/barracks/explore).
+- The local single-order-at-a-time rule remains unenforced hosted-side for all
+  three order screens (stacking), a documented divergence to revisit when the
+  hosted pages leave the DEV-shell stage.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
