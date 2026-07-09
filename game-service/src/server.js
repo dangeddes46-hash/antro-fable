@@ -1040,19 +1040,41 @@ function normalizeDevBuildingKey(value) {
   return key;
 }
 
+// ── Science reference port ────────────────────────────────────────────────────
+// Seven research fields with per-field levels (default 0), stored one row per
+// field in multiplayer_player_science, mirroring the buildings/armies row
+// pattern. Field list from the local prototype's scienceLevels state (src/App.jsx).
+// scienceLevelBonus(level) = 1 + level * 0.0005 (src/gameMath.js).
+const DEV_SCIENCE_FIELDS = ['agriculture', 'combat', 'crime', 'housing', 'population', 'banking', 'turrets'];
+function scienceLevelBonus(level) {
+  return 1 + (Math.max(0, Math.floor(Number(level || 0))) * 0.0005);
+}
+// Extract a { field: level } map from science rows (raw snake_case or formatted).
+function scienceLevelsFromRows(rows = []) {
+  const levels = Object.fromEntries(DEV_SCIENCE_FIELDS.map((field) => [field, 0]));
+  for (const row of rows) {
+    const field = row.science_key ?? row.scienceKey ?? row.field;
+    if (field && Object.prototype.hasOwnProperty.call(levels, field)) {
+      levels[field] = Math.max(0, Math.floor(Number(row.level ?? 0)));
+    }
+  }
+  return levels;
+}
+
 // ── Economy reference port ────────────────────────────────────────────────────
 // Faithful port of the local prototype's per-tick economy formulas:
 //   applyEconomyTickPure, calcCaps, supportedPopulationCap, productionPerTick,
 //   calculateStarvationLoss                                  (src/App.jsx)
 //   scienceLevelBonus(level) = 1 + level * 0.0005            (src/gameMath.js)
 //   power plant energy = TURRET_CONFIG.powerPlantEnergyPerTick (src/gameData.js)
-// The hosted round has no science levels yet, so every scienceLevelBonus term
-// evaluates at level 0 (bonus exactly 1). Server building keys are mapped onto
-// the client building vocabulary; building types with no hosted rows contribute
-// zero BY DATA, not by reinterpretation. Client fields with no hosted
-// counterpart (rebels, banked, protectionHours) evaluate as zero, which makes
-// the bank-interest term zero until a hosted banked balance exists.
-const ECONOMY_SCIENCE_BONUS = 1;
+// Per the reference, each cap/production/growth term takes a SPECIFIC science
+// field's bonus (documented per term below), not one blanket bonus. Levels come
+// from the player's multiplayer_player_science rows; absent rows read as level 0
+// (bonus 1). Server building keys are mapped onto the client building
+// vocabulary; building types with no hosted rows contribute zero BY DATA, not by
+// reinterpretation. Client fields with no hosted counterpart (rebels, banked,
+// protectionHours) evaluate as zero, which makes the bank-interest term zero
+// until a hosted banked balance exists.
 const ECONOMY_POWER_PLANT_ENERGY_PER_TICK = 50;
 // Starting money mirrors the reference round profile whose startingLand matches
 // the hosted seed (land 1000): roundProfiles["Intro Game"].startingCards =
@@ -1108,22 +1130,26 @@ function economyBuildingCounts(buildingRows = []) {
   }
   return counts;
 }
-function economyCalcCaps(b = {}) {
+// Reference calcCaps (src/App.jsx): each cap takes a specific field's bonus —
+// maxPop→housing, maxFed/maxWatered→agriculture, maxPoliced→crime, bankCap→banking.
+function economyCalcCaps(b = {}, sci = {}) {
   return {
-    maxPop: (b.living_areas || 0) * 150 * ECONOMY_SCIENCE_BONUS,
-    maxFed: (b.nutrition_suppliers || 0) * 250 * ECONOMY_SCIENCE_BONUS,
-    maxWatered: (b.water_purifiers || 0) * 400 * ECONOMY_SCIENCE_BONUS,
-    maxPoliced: (b.police_stations || 0) * 1000 * ECONOMY_SCIENCE_BONUS,
-    bankCap: (b.banks || 0) * 250000 * ECONOMY_SCIENCE_BONUS,
+    maxPop: (b.living_areas || 0) * 150 * scienceLevelBonus(sci.housing),
+    maxFed: (b.nutrition_suppliers || 0) * 250 * scienceLevelBonus(sci.agriculture),
+    maxWatered: (b.water_purifiers || 0) * 400 * scienceLevelBonus(sci.agriculture),
+    maxPoliced: (b.police_stations || 0) * 1000 * scienceLevelBonus(sci.crime),
+    bankCap: (b.banks || 0) * 250000 * scienceLevelBonus(sci.banking),
   };
 }
 function economySupportedPopulationCap(c = {}) {
   return Math.max(0, Math.min(Number(c.maxPop || 0), Number(c.maxFed || 0), Number(c.maxWatered || 0)));
 }
-function economyProductionPerTick(b = {}) {
+// Reference productionPerTick (src/App.jsx): food/water take agriculture; energy
+// takes NO science bonus.
+function economyProductionPerTick(b = {}, sci = {}) {
   return {
-    food: (b.nutrition_suppliers || 0) * 5 * ECONOMY_SCIENCE_BONUS,
-    water: (b.water_purifiers || 0) * 8 * ECONOMY_SCIENCE_BONUS,
+    food: (b.nutrition_suppliers || 0) * 5 * scienceLevelBonus(sci.agriculture),
+    water: (b.water_purifiers || 0) * 8 * scienceLevelBonus(sci.agriculture),
     energy: (b.power_plants || 0) * ECONOMY_POWER_PLANT_ENERGY_PER_TICK,
   };
 }
@@ -1140,14 +1166,17 @@ function economyStarvationLoss({ pop = 0, supportCap = 0, rawFood = 0, rawWater 
   const stockpileAttrition = currentPop * shortageSeverity * Math.min(0.25, 0.05 * ticks);
   return Math.min(currentPop, Math.floor(supportAttrition + stockpileAttrition));
 }
-function computeEconomyTick(stateRow, buildingRows = [], armyRows = []) {
+// Reference applyEconomyTickPure (src/App.jsx): popGain and the pop*2 tax income
+// both take the population field's bonus; consumption takes none. Bank interest
+// (banking field) stays dormant until a hosted banked balance exists.
+function computeEconomyTick(stateRow, buildingRows = [], armyRows = [], sci = {}) {
   const b = economyBuildingCounts(buildingRows);
-  const c = economyCalcCaps(b);
+  const c = economyCalcCaps(b, sci);
   const supportCap = economySupportedPopulationCap(c);
-  const p = economyProductionPerTick(b);
+  const p = economyProductionPerTick(b, sci);
   const armyUnits = (armyRows || []).reduce((sum, row) => sum + Math.max(0, Math.floor(Number(row.count || 0))), 0);
   const currentPop = Math.max(0, Number(stateRow.population || 0));
-  const popGain = Math.floor(Math.max(0, supportCap - currentPop - 0) * 0.015 * ECONOMY_SCIENCE_BONUS);
+  const popGain = Math.floor(Math.max(0, supportCap - currentPop - 0) * 0.015 * scienceLevelBonus(sci.population));
   const consumption = Math.floor((currentPop + 0 + armyUnits) * 0.02);
   const rawFood = Number(stateRow.food || 0) + p.food - consumption;
   const rawWater = Number(stateRow.water || 0) + p.water - consumption;
@@ -1156,7 +1185,7 @@ function computeEconomyTick(stateRow, buildingRows = [], armyRows = []) {
   nextPop = Math.max(0, nextPop - starvationLoss);
   return {
     population: nextPop,
-    money: Number(stateRow.money || 0) + currentPop * 2 * ECONOMY_SCIENCE_BONUS,
+    money: Number(stateRow.money || 0) + currentPop * 2 * scienceLevelBonus(sci.population),
     food: Math.max(0, rawFood),
     water: Math.max(0, rawWater),
     energy: Math.max(0, Number(stateRow.energy || 0) + p.energy),
@@ -1286,6 +1315,7 @@ async function seedDevRound(seedInput) {
   const state = await getOrCreatePlayerState(round.row.id, player.row.id);
   const buildings = await getOrCreatePlayerBuildings(round.row.id, player.row.id);
   const armies = await getOrCreatePlayerArmies(round.row.id, player.row.id);
+  const science = await getOrCreatePlayerScience(round.row.id, player.row.id);
   const event = await getOrCreateDevEvent(round.row.id, player.row.id, seedInput);
   const audit = await getOrCreateDevAudit(round.row.id, player.row.id, seedInput);
 
@@ -1353,6 +1383,13 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
+  const science = playerIds.length > 0
+    ? await fetchRows(
+        'multiplayer_player_science',
+        'id, player_id, round_id, science_key, level, created_at, updated_at',
+        (query) => query.eq('round_id', round.id).in('player_id', playerIds)
+      )
+    : [];
   const latestResetEvent = await fetchSingleRow(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
@@ -1383,6 +1420,7 @@ async function readDevRoundSummary(roundKey) {
   const stateByPlayerId = new Map(states.map((state) => [state.player_id, state]));
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
+  const scienceByPlayerId = groupRowsByKey(science, 'player_id');
   const accessLinkByPlayerId = new Map(activeAccessLinks.map((link) => [link.player_id, link]));
   const actionsByPlayerId = groupRowsByKey(visibleActionRows, 'player_id');
   const canonicalActionRows = accessLinkByPlayerId.size > 0
@@ -1409,6 +1447,7 @@ async function readDevRoundSummary(roundKey) {
       state: formatState(stateByPlayerId.get(player.id)),
       buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
       armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
+      science: formatScienceRows(scienceByPlayerId.get(player.id) || []),
       factoryCount: canonicalCountFromRows((buildingsByPlayerId.get(player.id) || []).filter((row) => row.building_key === 'factory')),
     }))
     .sort((left, right) => {
@@ -1480,6 +1519,7 @@ async function readHostedRoundEntryState(hostedInput) {
   const currentPlayerState = normalizeHostedPlayerState(currentPlayer?.state);
   const currentPlayerBuildings = normalizeHostedBuildingSummary(currentPlayer?.buildings || []);
   const currentPlayerArmies = normalizeHostedArmySummary(currentPlayer?.armies || []);
+  const currentPlayerScience = normalizeHostedScienceSummary(currentPlayer?.science || []);
   const currentPlayerFactoryCount = Math.max(0, Math.floor(Number(currentPlayerBuildings.counts.factory || 0)));
   const currentPlayerQueuedCount = Math.max(0, Math.floor(Number(actionSummary.queued + actionSummary.processing || 0)));
   const currentPlayerProcessedCount = Math.max(0, Math.floor(Number(actionSummary.processed || 0)));
@@ -1517,6 +1557,7 @@ async function readHostedRoundEntryState(hostedInput) {
     playerState: currentPlayerState,
     buildings: currentPlayerBuildings,
     armies: currentPlayerArmies,
+    science: currentPlayerScience,
     factoryCount: currentPlayerFactoryCount,
     queuedCount: currentPlayerQueuedCount,
     processedCount: currentPlayerProcessedCount,
@@ -1544,6 +1585,7 @@ async function readHostedRoundEntryState(hostedInput) {
       playerState: currentPlayerState,
       buildings: currentPlayerBuildings,
       armies: currentPlayerArmies,
+      science: currentPlayerScience,
       actionSummary: {
         total: actionSummary.total,
         queued: actionSummary.queued + actionSummary.processing,
@@ -2732,8 +2774,13 @@ async function applyEconomyTickForRound(round, nextTick) {
       'id, player_id, round_id, unit_key, count, training_count, returning_count',
       (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
     );
+    const scienceRows = await fetchRows(
+      'multiplayer_player_science',
+      'id, player_id, round_id, science_key, level, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
+    );
 
-    const next = computeEconomyTick(stateRow, buildingRows, armyRows);
+    const next = computeEconomyTick(stateRow, buildingRows, armyRows, scienceLevelsFromRows(scienceRows));
     await updateSingleRow('multiplayer_player_state', {
       population: next.population,
       money: next.money,
@@ -2810,6 +2857,17 @@ async function resetDevProofRound(resetInput) {
         state_version: Number(stateRow.state_version || 0) + 1,
         updated_at: resetAt,
       }, (query) => query.eq('id', stateRow.id));
+    }
+
+    // Reset every research field back to level 0.
+    for (const field of DEV_SCIENCE_FIELDS) {
+      await upsertRow('multiplayer_player_science', {
+        round_id: round.id,
+        player_id: currentPlayer.id,
+        science_key: field,
+        level: 0,
+        updated_at: resetAt,
+      }, 'player_id,round_id,science_key');
     }
   }
 
@@ -3030,6 +3088,7 @@ async function resolvePlayerFromGrant(grantId, roundKey, identityInput = {}) {
   await getOrCreatePlayerState(round.id, player.id);
   await getOrCreatePlayerBuildings(round.id, player.id);
   await getOrCreatePlayerArmies(round.id, player.id);
+  await getOrCreatePlayerScience(round.id, player.id);
 
   const touchedAt = nowIso();
   await updateSingleRow('multiplayer_players', {
@@ -3120,6 +3179,7 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
   await getOrCreatePlayerState(round.id, player.id);
   await getOrCreatePlayerBuildings(round.id, player.id);
   await getOrCreatePlayerArmies(round.id, player.id);
+  await getOrCreatePlayerScience(round.id, player.id);
 
   const touchedAt = nowIso();
   await updateSingleRow('multiplayer_players', {
@@ -3484,6 +3544,31 @@ async function getOrCreatePlayerArmies(roundId, playerId) {
   };
 }
 
+async function getOrCreatePlayerScience(roundId, playerId) {
+  // One row per research field (level 0), mirroring the buildings row pattern.
+  // Only missing rows are created so existing levels are never overwritten.
+  const existing = await fetchRows('multiplayer_player_science', 'id, player_id, round_id, science_key, level, created_at, updated_at', (query) =>
+    query.eq('round_id', roundId).eq('player_id', playerId)
+  );
+  const existingKeys = new Set(existing.map((row) => row.science_key));
+  const missingRows = DEV_SCIENCE_FIELDS.filter((field) => !existingKeys.has(field));
+
+  await Promise.all(
+    missingRows.map((field) =>
+      insertSingleRow('multiplayer_player_science', {
+        round_id: roundId,
+        player_id: playerId,
+        science_key: field,
+        level: 0,
+      })
+    )
+  );
+
+  return {
+    created: missingRows.length > 0,
+  };
+}
+
 async function getOrCreateDevEvent(roundId, playerId, seedInput) {
   const existing = await fetchSingleRow('multiplayer_round_events', 'id, round_id, tick, event_type, visibility, title, body, payload, created_at', (query) =>
     query.eq('round_id', roundId).eq('event_type', DEV_SEED_EVENT_TYPE)
@@ -3671,6 +3756,25 @@ function formatArmyRows(rows) {
     trainingCount: row.training_count,
     returningCount: row.returning_count,
   }));
+}
+
+function formatScienceRows(rows) {
+  return rows.map((row) => ({
+    id: row.id,
+    scienceKey: row.science_key,
+    level: row.level,
+  }));
+}
+
+function normalizeHostedScienceSummary(rows = []) {
+  const levels = scienceLevelsFromRows(rows);
+  const byKey = Object.fromEntries(DEV_SCIENCE_FIELDS.map((field) => [field, { level: levels[field] }]));
+  return {
+    rows: formatScienceRows(rows),
+    fields: DEV_SCIENCE_FIELDS.map((field) => ({ scienceKey: field, level: levels[field] })),
+    byKey,
+    levels,
+  };
 }
 
 function normalizeHostedPlayerState(state) {
