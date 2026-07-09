@@ -546,6 +546,55 @@ app.post('/api/dev/actions/queue-explore', requireDevEndpoints, async (req, res)
   }
 });
 
+app.post('/api/dev/actions/queue-science', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev queue-science endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevScienceInput(req.body || {});
+    const result = await queueDevScienceAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: {
+        id: result.action.id,
+        type: 'dev_queue_science',
+        status: result.action.status,
+        field: result.field,
+        fromLevel: result.fromLevel,
+        toLevel: result.toLevel,
+        requestedTick: result.requestedTick,
+        executeAfterTick: result.executeAfterTick,
+        durationTicks: result.durationTicks ?? null,
+        payload: result.action.payload,
+        result: result.action.result,
+      },
+      round: {
+        roundKey: result.round.roundKey,
+        previousTick: result.previousTick,
+        currentTick: result.round.currentTick,
+      },
+      player: {
+        displayName: result.player.displayName,
+      },
+      message: 'Research order queued.',
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'queue_science_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -946,6 +995,19 @@ function normalizeDevExploreInput(body) {
   };
 }
 
+function normalizeDevScienceInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const field = normalizeText(String(body.field ?? body.scienceKey ?? body.science_key ?? '')).toLowerCase();
+  if (!DEV_SCIENCE_FIELDS.includes(field)) {
+    throw createServiceError(400, 'invalid_science_field', `field must be one of: ${DEV_SCIENCE_FIELDS.join(', ')}.`);
+  }
+  return {
+    ...identity,
+    field,
+    idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
+  };
+}
+
 function normalizeDevManualTickInput(body) {
   const identity = normalizeDevIdentityInput(body);
   return {
@@ -1302,6 +1364,29 @@ function orderExploreGain(hours, spend, landNow) {
   const landPenalty = Math.sqrt(1000 / Math.max(1000, landNow));
   const scannerBonus = 1;
   return Math.max(1, Math.floor(120 * Math.sqrt(h) * cardFactor * landPenalty * scannerBonus));
+}
+
+// ── Science duration reference port ───────────────────────────────────────────
+// scienceDurationSeconds / scienceLabMultiplier and their constants, verbatim
+// from src/gameMath.js. Research has NO card cost (local startScienceResearch
+// logs "spent 0 cards"); the only gate is science_labs > 0 and one order per
+// field. Duration depends on the field's CURRENT level (research goes to
+// currentLevel + 1). Science labs use the same 0/1k/4k curve as barracks.
+const SCIENCE_TICK_SECONDS = 1800;
+const SCIENCE_IG_TARGET_LEVEL = 180;
+const SCIENCE_IG_TARGET_TICKS = 90 * 24 * 2;
+const SCIENCE_IG_SUM_SQUARES = SCIENCE_IG_TARGET_LEVEL * (SCIENCE_IG_TARGET_LEVEL + 1) * (2 * SCIENCE_IG_TARGET_LEVEL + 1) / 6;
+const SCIENCE_QUADRATIC_TICK_COEFFICIENT = (SCIENCE_IG_TARGET_TICKS * 4) / SCIENCE_IG_SUM_SQUARES;
+function orderScienceLabMultiplier(scienceLabs) {
+  const labs = Math.max(0, Number(scienceLabs) || 0);
+  if (labs <= 1000) return 1 + labs / 1000;
+  if (labs <= 4000) return 2 + ((labs - 1000) / 3000) * 2;
+  return 4;
+}
+function orderScienceDurationSeconds(currentLevel, scienceLabs) {
+  const nextLevel = Math.max(1, Math.floor(Number(currentLevel || 0)) + 1);
+  const baselineTicks = SCIENCE_QUADRATIC_TICK_COEFFICIENT * nextLevel * nextLevel;
+  return Math.max(1, Math.floor((baselineTicks * SCIENCE_TICK_SECONDS) / orderScienceLabMultiplier(scienceLabs)));
 }
 
 function createServiceError(statusCode, code, message) {
@@ -2338,6 +2423,162 @@ async function queueDevExploreAction(actionInput) {
   };
 }
 
+async function queueDevScienceAction(actionInput) {
+  // Research orders must belong to a grant-linked player, like build/train/explore.
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+
+  const field = actionInput.field;
+  const idempotencyKey = actionInput.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existingAction = await fetchSingleRow(
+      'multiplayer_action_queue',
+      'id, round_id, player_id, action_type, status, requested_tick, execute_after_tick, payload, result, error_message, idempotency_key, created_at, processed_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_queue_science').eq('idempotency_key', idempotencyKey)
+    );
+
+    if (existingAction) {
+      return {
+        round: formatRound(round),
+        player: formatPlayer(player),
+        previousTick: Number(round.current_tick || 0),
+        requestedTick: Number(existingAction.requested_tick ?? round.current_tick ?? 0),
+        executeAfterTick: Number(existingAction.execute_after_tick ?? Number(round.current_tick || 0) + 1),
+        durationTicks: null,
+        field: existingAction.payload?.field || field,
+        fromLevel: Number(existingAction.payload?.fromLevel ?? 0),
+        toLevel: Number(existingAction.payload?.toLevel ?? 0),
+        action: formatActionQueue(existingAction),
+      };
+    }
+  }
+
+  const previousTick = Number(round.current_tick || 0);
+  const requestedTick = previousTick;
+
+  // Requirement: at least one completed science lab (local startScienceResearch).
+  const labRows = await fetchRows(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'science_labs')
+  );
+  const scienceLabs = canonicalCountFromRows(labRows);
+  if (scienceLabs <= 0) {
+    throw createServiceError(400, 'no_science_labs', 'You have no completed Science Labs.');
+  }
+
+  // Single-order-PER-FIELD: reject a second concurrent order for the same field
+  // so its level cannot double-increment from a stale baseline. Other fields may
+  // research concurrently.
+  const inFlight = await fetchRows(
+    'multiplayer_action_queue',
+    'id, player_id, round_id, action_type, status, payload, created_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('action_type', 'dev_queue_science').in('status', ['queued', 'processing'])
+  );
+  if (inFlight.some((row) => (row.payload?.field || null) === field)) {
+    throw createServiceError(409, 'research_already_running', `A ${field} research order is already running.`);
+  }
+
+  // Duration depends on the field's CURRENT level (research targets currentLevel + 1).
+  await getOrCreatePlayerScience(round.id, player.id);
+  const scienceRows = await fetchRows(
+    'multiplayer_player_science',
+    'id, player_id, round_id, science_key, level, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id)
+  );
+  const currentLevels = scienceLevelsFromRows(scienceRows);
+  const fromLevel = Math.max(0, Math.floor(Number(currentLevels[field] || 0)));
+  const toLevel = fromLevel + 1;
+  const durationSeconds = orderScienceDurationSeconds(fromLevel, scienceLabs);
+  const durationTicks = orderTicksFromGameSeconds(durationSeconds);
+  const executeAfterTick = previousTick + durationTicks;
+
+  // Research has no card cost — nothing to debit.
+  const actionPayload = {
+    field,
+    fromLevel,
+    toLevel,
+  };
+  const queuedAt = nowIso();
+  const actionRow = await insertSingleRow('multiplayer_action_queue', {
+    round_id: round.id,
+    player_id: player.id,
+    action_type: 'dev_queue_science',
+    status: 'queued',
+    requested_tick: requestedTick,
+    execute_after_tick: executeAfterTick,
+    payload: actionPayload,
+    result: null,
+    error_message: null,
+    idempotency_key: idempotencyKey,
+    processed_at: null,
+    updated_at: queuedAt,
+  });
+
+  try {
+    await insertSingleRow('multiplayer_round_events', {
+      round_id: round.id,
+      tick: requestedTick,
+      event_type: 'dev_order_queued',
+      visibility: 'public',
+      actor_player_id: player.id,
+      title: 'Research order queued',
+      body: `${player.display_name} started ${field} research to level ${toLevel}.`,
+      payload: {
+        actionQueueId: actionRow.id,
+        actionType: 'dev_queue_science',
+        ...actionPayload,
+        requestedTick,
+        executeAfterTick,
+      },
+    });
+
+    await insertSingleRow('multiplayer_audit_log', {
+      round_id: round.id,
+      player_id: player.id,
+      actor_type: 'dev',
+      event_type: 'dev_queue_science',
+      event_data: {
+        round_id: round.id,
+        round_key: round.round_key,
+        player_id: player.id,
+        display_name: player.display_name,
+        action_queue_id: actionRow.id,
+        action_type: 'dev_queue_science',
+        field,
+        from_level: fromLevel,
+        to_level: toLevel,
+        requested_tick: requestedTick,
+        execute_after_tick: executeAfterTick,
+      },
+    });
+  } catch (error) {
+    await updateSingleRow('multiplayer_action_queue', {
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unexpected queue-science failure.',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', actionRow.id)).catch(() => {});
+    throw error;
+  }
+
+  return {
+    round: formatRound(round),
+    player: formatPlayer(player),
+    previousTick,
+    requestedTick,
+    executeAfterTick,
+    durationTicks,
+    field,
+    fromLevel,
+    toLevel,
+    action: {
+      ...actionRow,
+      payload: actionPayload,
+      result: null,
+    },
+  };
+}
+
 async function runManualDevTick(tickInput) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', tickInput.roundKey)
@@ -2479,6 +2720,7 @@ const DEV_SCREEN_ACTION_TYPES = {
   build: ['dev_queue_build_factory'],
   barracks: ['dev_queue_train_units'],
   explore: ['dev_queue_explore'],
+  science: ['dev_queue_science'],
 };
 
 function normalizeDevCompleteDueInput(body) {
@@ -2628,10 +2870,55 @@ async function applyDueExploreOrder({ round, player, action, appliedAtTick }) {
   };
 }
 
+async function applyDueScienceOrder({ round, player, action, appliedAtTick }) {
+  const field = action.payload?.field;
+  if (!DEV_SCIENCE_FIELDS.includes(field)) {
+    throw createServiceError(400, 'invalid_science_field', `Unknown research field "${field}".`);
+  }
+  const scienceRow = await fetchSingleRow(
+    'multiplayer_player_science',
+    'id, player_id, round_id, science_key, level, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('science_key', field)
+  );
+  // Reference completeScienceResearch: level = current level + 1. Single-order-
+  // per-field guarantees the current level still equals the queued fromLevel.
+  const oldLevel = Math.max(0, Math.floor(Number(scienceRow?.level ?? 0)));
+  const newLevel = oldLevel + 1;
+  const processedAt = nowIso();
+  const actionResult = {
+    actionType: 'dev_queue_science',
+    field,
+    oldLevel,
+    newLevel,
+    tick: appliedAtTick,
+  };
+
+  await upsertRow('multiplayer_player_science', {
+    round_id: round.id,
+    player_id: player.id,
+    science_key: field,
+    level: newLevel,
+    updated_at: processedAt,
+  }, 'player_id,round_id,science_key');
+
+  return {
+    actionResult,
+    eventType: 'dev_science_processed',
+    eventTitle: 'Research completed',
+    eventBody: `${player.display_name} completed ${field} research to level ${newLevel}.`,
+    auditData: {
+      field,
+      old_level: oldLevel,
+      new_level: newLevel,
+    },
+  };
+}
+
 const DEV_ORDER_APPLIERS = {
   dev_queue_build_factory: applyDueBuildOrder,
   dev_queue_train_units: applyDueTrainOrder,
   dev_queue_explore: applyDueExploreOrder,
+  dev_queue_science: applyDueScienceOrder,
 };
 
 async function completeDueOrdersForPlayer(identity, screen) {
