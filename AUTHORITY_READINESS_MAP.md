@@ -194,6 +194,36 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   three order screens (stacking), a documented divergence to revisit when the
   hosted pages leave the DEV-shell stage.
 
+## 3g. Slice 6 status (Science + economy un-freeze) — done
+
+- Science is the fifth screen on the shared due-order mechanism. Duration is the
+  verbatim scienceDurationSeconds/scienceLabMultiplier port (src/gameMath.js):
+  quadratic in nextLevel = currentLevel+1 over the 0/1k/4k lab curve; the queue
+  endpoint reads the field's CURRENT level so pricing is never off a stale
+  baseline. No card cost (local startScienceResearch spends 0); gates are
+  science_labs > 0 (no_science_labs) and single-order-PER-FIELD
+  (research_already_running, 409 — concurrent research on OTHER fields allowed).
+  Completion on the Science visit increments the field level by 1.
+- New state surface: `multiplayer_player_science` K/V table, one row per field
+  (agriculture/combat/crime/housing/population/banking/turrets), mirroring the
+  buildings/armies row pattern (getOrCreate creates only missing rows; seeded/
+  reset alongside the other tables; proof reset returns every field to 0).
+- **Economy un-freeze (both parts landed together):** every constant-folded
+  scienceLevelBonus(0)=1 in economyCalcCaps/economyProductionPerTick/
+  computeEconomyTick is now the real per-field bonus — maxPop→housing,
+  maxFed/maxWatered/food/water→agriculture, maxPoliced→crime, bankCap/interest→
+  banking, popGain/tax→population; energy and consumption take none. Fidelity
+  re-verified against the verbatim reference oracle parameterized by NON-1
+  levels (housing 100 / agriculture 200 / population 400), over 3 cycles, WITH
+  an explicit assertion that the server diverges from the level-0 oracle —
+  proving the un-freeze is observable, not a constant that cancels. banking's
+  effect stays dormant (needs hosted `banked`); crime/combat/turrets are wired
+  but not economy-observable (crime→maxPoliced, combat/turrets→military).
+- Two whitelist-drop bugs fixed in passing (same class): the hosted-round/enter
+  response handler and the client normaliseHostedRoundSummary each explicitly
+  list fields and had omitted `science`, so the page rendered level 0 despite
+  correct server state. Both now carry it.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
