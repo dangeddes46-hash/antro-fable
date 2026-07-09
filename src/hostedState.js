@@ -173,6 +173,7 @@ export function normaliseHostedRoundSummary(result, grantId) {
     playerState: result?.playerState || null,
     buildings: result?.buildings || null,
     armies: result?.armies || null,
+    science: result?.science || null,
     actionSummary: result?.actionSummary || null,
     recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
     otherPlayers: Array.isArray(result?.otherPlayers) ? result.otherPlayers : [],
