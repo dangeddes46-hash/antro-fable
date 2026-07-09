@@ -26,9 +26,22 @@ export const MULTIPLAYER_PREVIEW_ROUND_KEY = "shared-dev-001";
 export const HOSTED_QUEUE_BUILD_ENDPOINT = "/api/dev/actions/queue-build-factory";
 export const HOSTED_QUEUE_TRAIN_ENDPOINT = "/api/dev/actions/queue-train-units";
 export const HOSTED_QUEUE_EXPLORE_ENDPOINT = "/api/dev/actions/queue-explore";
+export const HOSTED_QUEUE_SCIENCE_ENDPOINT = "/api/dev/actions/queue-science";
 // Orders finish after a real duration (in round ticks) but only apply when the
 // player visits the matching screen; the visit calls this endpoint.
 export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
+// Seven research fields with the reference labels (src/App.jsx scienceLabel).
+export const HOSTED_SCIENCE_FIELDS = ["agriculture", "combat", "crime", "housing", "population", "banking", "turrets"];
+export const HOSTED_SCIENCE_LABELS = {
+  agriculture: "Agriculture",
+  combat: "Combat",
+  crime: "Crime",
+  housing: "Housing",
+  population: "Population",
+  banking: "Banking",
+  turrets: "Turrets",
+};
+export function hostedScienceLabel(field) { return HOSTED_SCIENCE_LABELS[field] || String(field || ""); }
 export const HOSTED_BUILDING_ORDER = ["living_area", "factory", "barracks", "bank", "science_labs", "nutrition_suppliers", "water_purifiers", "power_plants"];
 export const HOSTED_BUILDING_LABELS = {
   living_area: "Living Area",
@@ -163,6 +176,10 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "invalid_spend") return "Enter how much money to spend on exploring.";
   if (errorCode === "explore_gain_exceeds_land") return "Explore rejected: the estimated return would exceed your existing land.";
   if (errorCode === "queue_explore_failed") return "The exploration could not be queued.";
+  if (errorCode === "invalid_science_field") return "That research field is not valid.";
+  if (errorCode === "no_science_labs") return "You have no completed Science Labs.";
+  if (errorCode === "research_already_running") return "A research order for that field is already running.";
+  if (errorCode === "queue_science_failed") return "The research order could not be queued.";
   if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

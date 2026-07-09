@@ -6,7 +6,8 @@
 // client-editable display names or tester labels.
 import { races } from "./gameData.js";
 import { cleanSingleLineText } from "./gameMath.js";
-import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_BUILDING_ORDER, hostedBuildingLabel } from "./hostedApi.js";
+import { maskStableIdentifier, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_BUILDING_ORDER, hostedBuildingLabel, HOSTED_SCIENCE_FIELDS, hostedScienceLabel } from "./hostedApi.js";
+import { scienceDurationSeconds } from "./gameMath.js";
 
 function raceNameFromKey(key) { return races[key]?.name || "Human"; }
 
@@ -82,6 +83,29 @@ export function hostedExploreEstimate(hours, spend, landNow) {
   const cardFactor = Math.sqrt(Math.max(0.01, (Number(spend) || 0) / 1000000));
   const landPenalty = Math.sqrt(1000 / Math.max(1000, Number(landNow) || 0));
   return Math.max(1, Math.floor(120 * Math.sqrt(h) * cardFactor * landPenalty));
+}
+export function buildQueueScienceBody({ hostedSummary, testerAccessRecord, field }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    field,
+  };
+}
+// Seven research fields from the hosted science summary, with the reference
+// labels and a display-only next-level duration (scienceDurationSeconds,
+// src/gameMath.js — quadratic in currentLevel+1 over the lab curve). The server
+// recomputes the authoritative duration at queue time from the current level.
+export function hostedScienceRows(science, scienceLabs) {
+  const levels = science && typeof science === "object" && science.levels && typeof science.levels === "object" ? science.levels : {};
+  return HOSTED_SCIENCE_FIELDS.map((field) => {
+    const level = Math.max(0, Math.floor(Number(levels[field] ?? 0)));
+    return {
+      field,
+      label: hostedScienceLabel(field),
+      level,
+      nextLevel: level + 1,
+      nextLevelSeconds: scienceDurationSeconds(level, { science_labs: Math.max(0, Math.floor(Number(scienceLabs) || 0)) }),
+    };
+  });
 }
 // Six race-agnostic unit slots from the hosted armies summary, labelled with the
 // reference unit names for the player's race (races[raceKey] || races.human).
@@ -187,6 +211,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const playerState = summary?.playerState || null;
   const buildings = summary?.buildings || null;
   const armies = summary?.armies || null;
+  const science = summary?.science || null;
   const actionSummary = summary?.actionSummary || null;
   const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
   const otherPlayers = Array.isArray(summary?.otherPlayers) ? summary.otherPlayers : [];
@@ -214,6 +239,8 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const roundStatus = roundSummary?.roundStatus || round?.status || "Unknown";
   const buildingRows = hostedBuildingRows(buildings);
   const armyRows = hostedArmyRows(armies, raceKey);
+  const scienceLabsCount = Number(buildings?.byKey?.science_labs?.count ?? buildings?.scienceLabs ?? buildings?.science_labs ?? 0);
+  const scienceRows = hostedScienceRows(science, scienceLabsCount);
   const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
   const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
   const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
@@ -257,6 +284,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     roundStatus,
     buildingRows,
     armyRows,
+    scienceRows,
     factoryCount,
     queuedCount,
     processedCount,
