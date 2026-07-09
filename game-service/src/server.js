@@ -292,6 +292,7 @@ app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) =>
       playerState: result.playerState,
       buildings: result.buildings,
       armies: result.armies,
+      science: result.science,
       factoryCount: result.factoryCount,
       queuedCount: result.queuedCount,
       processedCount: result.processedCount,
