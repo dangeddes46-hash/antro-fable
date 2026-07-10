@@ -17,7 +17,16 @@ This folder contains draft Supabase SQL and review notes for the future server-a
 - `001_multiplayer_schema_skeleton.sql` - main draft schema skeleton
 - `002_multiplayer_seed_dev_round_example.sql` - optional dev/example seed
 - `003_add_player_banked.sql` - incremental: adds multiplayer_player_state.banked
+- `004_add_player_science_table.sql` - incremental: creates multiplayer_player_science
 - `RLS_SECURITY_NOTES.md` - access and policy notes for future review
+
+## Migration ordering / deploy note
+
+The v0.43.x game-service reads columns and tables that must exist before the
+service is deployed against a database. Apply the incremental migrations
+(003, 004) to any database created from an earlier skeleton, or the round-summary
+and hosted-round reads will fail (e.g. `column multiplayer_player_state.banked
+does not exist`). Fresh installs from 001 already include them.
 
 ## Notes
 
