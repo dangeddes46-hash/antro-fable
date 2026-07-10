@@ -224,6 +224,43 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   list fields and had omitted `science`, so the page rendered level 0 despite
   correct server state. Both now carry it.
 
+## 3h. Slice 7 status (bank interest — economy port complete) — done
+
+- The last dormant economy term is live. `banked` is a per-player scalar (same
+  family as money/food/water/energy/population) so it is a
+  `multiplayer_player_state` COLUMN, not a K/V table — a deliberate deviation
+  from the buildings/armies/science K/V pattern, because those hold multiple
+  keyed rows per player and a single balance does not. Threaded into every state
+  select/insert/reset, normalizeHostedPlayerState, formatState.
+- Interest ported verbatim from applyEconomyTickPure (src/App.jsx): interest =
+  floor(banked * 0.0010415 * scienceLevelBonus(banking)); toBank = min(max(0,
+  bankCap - banked), interest) where bankCap = banks * 250000 *
+  scienceLevelBonus(banking); money += interest - toBank; banked += toBank. So
+  banking science scales BOTH the interest and the cap. Verified against the
+  verbatim oracle with a non-zero balance over 2 cycles (all-to-bank under cap)
+  AND a cap-overflow case (all interest to money at cap).
+- The real action that sets the balance: instant Bank deposit/withdraw
+  (/api/dev/actions/bank-deposit + bank-withdraw, grant identity required) —
+  ports of depositBankAmount/withdrawBankAmount. INSTANT, not due-orders (the
+  local Bank screen mutates immediately), so Bank has no completion-on-visit
+  effect and no DEV_SCREEN_ACTION_TYPES entry. Rejections: no_banks /
+  insufficient_funds / banks_full / no_banked_funds / invalid_amount.
+- **Economy port is now COMPLETE**: every term in applyEconomyTickPure has a
+  faithful hosted counterpart (production/consumption, pop growth + starvation,
+  tax, per-field science bonuses, and now bank interest). Nothing in the
+  reference economy tick remains stubbed or zero-by-data.
+
+### Deploy-integrity finding (from this slice's production probe)
+- Production auto-tracks this branch and is on v0.43.2 with this session's code —
+  the long-standing "deployed instance still v0.43.1" note is CLOSED.
+- BUT the production database is behind the code: `multiplayer_player_state.banked`
+  does not exist there (round-summary/enter currently 500 on reads), and the
+  Science slice's `multiplayer_player_science` table was added in code without a
+  migration file. **Required before production works again:** apply
+  `supabase/multiplayer/003_add_player_banked.sql` AND
+  `004_add_player_science_table.sql` to the production Supabase. Both are now in
+  the repo; 001 skeleton includes them for fresh installs.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
