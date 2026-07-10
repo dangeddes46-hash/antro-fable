@@ -596,6 +596,68 @@ app.post('/api/dev/actions/queue-science', requireDevEndpoints, async (req, res)
   }
 });
 
+app.post('/api/dev/actions/bank-deposit', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev bank-deposit endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevBankInput(req.body || {});
+    const result = await bankDepositAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_bank_deposit', requested: result.requested, deposited: result.deposited, money: result.money, banked: result.banked, bankCap: result.bankCap },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Deposited ${result.deposited} into your banks.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'bank_deposit_failed');
+  }
+});
+
+app.post('/api/dev/actions/bank-withdraw', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev bank-withdraw endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevBankInput(req.body || {});
+    const result = await bankWithdrawAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_bank_withdraw', requested: result.requested, withdrawn: result.withdrawn, money: result.money, banked: result.banked, bankCap: result.bankCap },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Withdrew ${result.withdrawn} from your banks.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'bank_withdraw_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -1007,6 +1069,17 @@ function normalizeDevScienceInput(body) {
     field,
     idempotencyKey: normalizeText(body.idempotencyKey || body.idempotency_key || ''),
   };
+}
+
+function normalizeDevBankInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const rawAmount = body.amount ?? body.cards ?? body.money;
+  const amount = typeof rawAmount === 'number' ? rawAmount : Number(String(rawAmount ?? '').trim());
+  // Reference parseQty: only positive integers are valid amounts.
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw createServiceError(400, 'invalid_amount', 'Bank amount must be a positive whole number.');
+  }
+  return { ...identity, amount };
 }
 
 function normalizeDevManualTickInput(body) {
@@ -2584,6 +2657,133 @@ async function queueDevScienceAction(actionInput) {
       result: null,
     },
   };
+}
+
+// Reference calcCaps.bankCap (src/App.jsx): banks * 250000 * banking-science bonus.
+function bankCapacityFor(banksCount, bankingLevel) {
+  return Math.max(0, Number(banksCount) || 0) * 250000 * scienceLevelBonus(bankingLevel);
+}
+
+// Reads the player's banks count and banking science level to derive bank cap.
+async function loadBankContext(round, player) {
+  const stateResult = await getOrCreatePlayerState(round.id, player.id);
+  const stateRow = stateResult.row;
+  const bankRows = await fetchRows(
+    'multiplayer_player_buildings',
+    'id, player_id, round_id, building_key, count, effective_count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('building_key', 'bank')
+  );
+  const banksCount = canonicalCountFromRows(bankRows);
+  await getOrCreatePlayerScience(round.id, player.id);
+  const scienceRows = await fetchRows(
+    'multiplayer_player_science',
+    'id, player_id, round_id, science_key, level, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', player.id)
+  );
+  const bankingLevel = scienceLevelsFromRows(scienceRows).banking;
+  return { stateRow, banksCount, bankCap: bankCapacityFor(banksCount, bankingLevel) };
+}
+
+// Instant Bank deposit — NOT a due-order. Port of depositBankAmount (src/App.jsx):
+// requires banks, money on hand and free capacity; deposits the clamped amount
+// immediately (money -> banked).
+async function bankDepositAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+  const amount = actionInput.amount;
+  const { stateRow, banksCount, bankCap } = await loadBankContext(round, player);
+  const money = Math.max(0, Number(stateRow.money || 0));
+  const banked = Math.max(0, Number(stateRow.banked || 0));
+  if (banksCount <= 0) {
+    throw createServiceError(400, 'no_banks', 'You have no completed Banks.');
+  }
+  if (money <= 0) {
+    throw createServiceError(400, 'insufficient_funds', 'You have no money on hand to deposit.');
+  }
+  const space = Math.max(0, bankCap - banked);
+  if (space <= 0) {
+    throw createServiceError(400, 'banks_full', 'Your banks are full.');
+  }
+  const actual = Math.min(amount, money, space);
+  if (actual <= 0) {
+    throw createServiceError(400, 'insufficient_funds', 'No valid amount can be deposited.');
+  }
+  const newMoney = money - actual;
+  const newBanked = banked + actual;
+  const at = nowIso();
+  await updateSingleRow('multiplayer_player_state', {
+    money: newMoney,
+    banked: newBanked,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: at,
+  }, (query) => query.eq('id', stateRow.id));
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_bank_deposit',
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Bank deposit',
+    body: `${player.display_name} deposited ${actual} into their banks.`,
+    payload: { actionType: 'dev_bank_deposit', amount: actual, money: newMoney, banked: newBanked, bankCap },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_bank_deposit',
+    event_data: { round_id: round.id, round_key: round.round_key, player_id: player.id, display_name: player.display_name, requested: amount, deposited: actual, money: newMoney, banked: newBanked, bank_cap: bankCap },
+  }).catch(() => {});
+
+  return { round, player, requested: amount, deposited: actual, money: newMoney, banked: newBanked, bankCap };
+}
+
+// Instant Bank withdraw — port of withdrawBankAmount (src/App.jsx): clamps to the
+// banked balance and moves it back to money immediately.
+async function bankWithdrawAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+  const amount = actionInput.amount;
+  const { stateRow, bankCap } = await loadBankContext(round, player);
+  const money = Math.max(0, Number(stateRow.money || 0));
+  const banked = Math.max(0, Number(stateRow.banked || 0));
+  if (banked <= 0) {
+    throw createServiceError(400, 'no_banked_funds', 'You have no banked money to withdraw.');
+  }
+  const actual = Math.min(amount, banked);
+  if (actual <= 0) {
+    throw createServiceError(400, 'no_banked_funds', 'No valid amount can be withdrawn.');
+  }
+  const newMoney = money + actual;
+  const newBanked = banked - actual;
+  const at = nowIso();
+  await updateSingleRow('multiplayer_player_state', {
+    money: newMoney,
+    banked: newBanked,
+    state_version: Number(stateRow.state_version || 0) + 1,
+    updated_at: at,
+  }, (query) => query.eq('id', stateRow.id));
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_bank_withdraw',
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Bank withdrawal',
+    body: `${player.display_name} withdrew ${actual} from their banks.`,
+    payload: { actionType: 'dev_bank_withdraw', amount: actual, money: newMoney, banked: newBanked, bankCap },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_bank_withdraw',
+    event_data: { round_id: round.id, round_key: round.round_key, player_id: player.id, display_name: player.display_name, requested: amount, withdrawn: actual, money: newMoney, banked: newBanked, bank_cap: bankCap },
+  }).catch(() => {});
+
+  return { round, player, requested: amount, withdrawn: actual, money: newMoney, banked: newBanked, bankCap };
 }
 
 async function runManualDevTick(tickInput) {
