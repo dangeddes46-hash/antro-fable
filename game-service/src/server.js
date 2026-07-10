@@ -1231,7 +1231,9 @@ function economyStarvationLoss({ pop = 0, supportCap = 0, rawFood = 0, rawWater 
 }
 // Reference applyEconomyTickPure (src/App.jsx): popGain and the pop*2 tax income
 // both take the population field's bonus; consumption takes none. Bank interest
-// (banking field) stays dormant until a hosted banked balance exists.
+// takes the banking field's bonus: interest accrues on the banked balance, the
+// portion that fits under the (banking-scaled) bank cap is auto-deposited, and
+// the remainder lands in on-hand money.
 function computeEconomyTick(stateRow, buildingRows = [], armyRows = [], sci = {}) {
   const b = economyBuildingCounts(buildingRows);
   const c = economyCalcCaps(b, sci);
@@ -1239,16 +1241,20 @@ function computeEconomyTick(stateRow, buildingRows = [], armyRows = [], sci = {}
   const p = economyProductionPerTick(b, sci);
   const armyUnits = (armyRows || []).reduce((sum, row) => sum + Math.max(0, Math.floor(Number(row.count || 0))), 0);
   const currentPop = Math.max(0, Number(stateRow.population || 0));
+  const banked = Math.max(0, Number(stateRow.banked || 0));
   const popGain = Math.floor(Math.max(0, supportCap - currentPop - 0) * 0.015 * scienceLevelBonus(sci.population));
   const consumption = Math.floor((currentPop + 0 + armyUnits) * 0.02);
   const rawFood = Number(stateRow.food || 0) + p.food - consumption;
   const rawWater = Number(stateRow.water || 0) + p.water - consumption;
+  const interest = Math.floor(banked * 0.0010415 * scienceLevelBonus(sci.banking));
+  const toBank = Math.min(Math.max(0, c.bankCap - banked), interest);
   let nextPop = currentPop + popGain;
   const starvationLoss = economyStarvationLoss({ pop: nextPop, supportCap, rawFood, rawWater, consumption, tickEquivalent: 1 });
   nextPop = Math.max(0, nextPop - starvationLoss);
   return {
     population: nextPop,
-    money: Number(stateRow.money || 0) + currentPop * 2 * scienceLevelBonus(sci.population),
+    money: Number(stateRow.money || 0) + currentPop * 2 * scienceLevelBonus(sci.population) + (interest - toBank),
+    banked: banked + toBank,
     food: Math.max(0, rawFood),
     water: Math.max(0, rawWater),
     energy: Math.max(0, Number(stateRow.energy || 0) + p.energy),
@@ -1451,7 +1457,7 @@ async function readDevRoundSummary(roundKey) {
   const states = playerIds.length > 0
     ? await fetchRows(
         'multiplayer_player_state',
-        'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+        'id, player_id, round_id, tick, state_version, race_key, land, power, money, banked, energy, food, water, population, created_at, updated_at',
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
@@ -2831,7 +2837,7 @@ async function applyDueExploreOrder({ round, player, action, appliedAtTick }) {
   const gain = Math.max(0, Math.floor(Number(action.payload?.gain || 0)));
   const stateRow = await fetchSingleRow(
     'multiplayer_player_state',
-    'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+    'id, player_id, round_id, tick, state_version, race_key, land, power, money, banked, energy, food, water, population, created_at, updated_at',
     (query) => query.eq('round_id', round.id).eq('player_id', player.id)
   );
   if (!stateRow) {
@@ -3047,7 +3053,7 @@ async function applyEconomyTickForRound(round, nextTick) {
   for (const playerRound of activePlayerRounds) {
     const stateRow = await fetchSingleRow(
       'multiplayer_player_state',
-      'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+      'id, player_id, round_id, tick, state_version, race_key, land, power, money, banked, energy, food, water, population, created_at, updated_at',
       (query) => query.eq('round_id', round.id).eq('player_id', playerRound.player_id)
     );
     if (!stateRow) continue;
@@ -3072,6 +3078,7 @@ async function applyEconomyTickForRound(round, nextTick) {
     await updateSingleRow('multiplayer_player_state', {
       population: next.population,
       money: next.money,
+      banked: next.banked,
       food: next.food,
       water: next.water,
       energy: next.energy,
@@ -3131,12 +3138,13 @@ async function resetDevProofRound(resetInput) {
 
     const stateRow = await fetchSingleRow(
       'multiplayer_player_state',
-      'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+      'id, player_id, round_id, tick, state_version, race_key, land, power, money, banked, energy, food, water, population, created_at, updated_at',
       (query) => query.eq('round_id', round.id).eq('player_id', currentPlayer.id)
     );
     if (stateRow) {
       await updateSingleRow('multiplayer_player_state', {
         money: ECONOMY_STARTING_MONEY,
+        banked: 0,
         population: 0,
         food: 0,
         water: 0,
@@ -3740,7 +3748,7 @@ async function getOrCreatePlayerRound(roundId, playerId) {
 async function getOrCreatePlayerState(roundId, playerId) {
   const existing = await fetchSingleRow(
     'multiplayer_player_state',
-    'id, player_id, round_id, tick, state_version, race_key, land, power, money, energy, food, water, population, created_at, updated_at',
+    'id, player_id, round_id, tick, state_version, race_key, land, power, money, banked, energy, food, water, population, created_at, updated_at',
     (query) => query.eq('round_id', roundId).eq('player_id', playerId)
   );
 
@@ -3760,6 +3768,7 @@ async function getOrCreatePlayerState(roundId, playerId) {
     land: 1000,
     power: 0,
     money: ECONOMY_STARTING_MONEY,
+    banked: 0,
     energy: 0,
     food: 0,
     water: 0,
@@ -4020,6 +4029,7 @@ function formatState(state) {
     land: state.land,
     power: state.power,
     money: state.money,
+    banked: state.banked,
     energy: state.energy,
     food: state.food,
     water: state.water,
@@ -4074,6 +4084,7 @@ function normalizeHostedPlayerState(state) {
     land: Number(state?.land ?? 0),
     power: Number(state?.power ?? 0),
     money: Number(state?.money ?? 0),
+    banked: Number(state?.banked ?? 0),
     energy: Number(state?.energy ?? 0),
     food: Number(state?.food ?? 0),
     water: Number(state?.water ?? 0),
