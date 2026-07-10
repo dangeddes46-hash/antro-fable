@@ -90,6 +90,12 @@ export function buildQueueScienceBody({ hostedSummary, testerAccessRecord, field
     field,
   };
 }
+export function buildBankActionBody({ hostedSummary, testerAccessRecord, amount }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    amount,
+  };
+}
 // Seven research fields from the hosted science summary, with the reference
 // labels and a display-only next-level duration (scienceDurationSeconds,
 // src/gameMath.js — quadratic in currentLevel+1 over the lab curve). The server
@@ -230,6 +236,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const land = Number(playerState?.land ?? currentPlayerSummary?.land ?? 0);
   const power = Number(playerState?.power ?? currentPlayerSummary?.power ?? 0);
   const money = Number(playerState?.money ?? currentPlayerSummary?.money ?? 0);
+  const banked = Number(playerState?.banked ?? 0);
   const energy = Number(playerState?.energy ?? 0);
   const food = Number(playerState?.food ?? 0);
   const water = Number(playerState?.water ?? 0);
@@ -242,6 +249,10 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const armyRows = hostedArmyRows(armies, raceKey);
   const scienceLabsCount = Number(buildings?.byKey?.science_labs?.count ?? buildings?.scienceLabs ?? buildings?.science_labs ?? 0);
   const scienceRows = hostedScienceRows(science, scienceLabsCount);
+  // Bank cap mirrors the reference calcCaps.bankCap: banks * 250000 * banking bonus.
+  const banksCount = Number(buildings?.byKey?.bank?.count ?? buildings?.bank ?? buildings?.banks ?? 0);
+  const bankingLevel = Number(science?.levels?.banking ?? 0);
+  const bankCap = banksCount * 250000 * (1 + Math.max(0, Math.floor(bankingLevel)) * 0.0005);
   const factoryCount = Number(summary?.factoryCount ?? buildings?.factories ?? buildings?.counts?.factory ?? currentPlayerSummary?.factoryCount ?? 0);
   const queuedCount = Number(summary?.queuedCount ?? actionSummary?.queued ?? currentPlayerSummary?.queuedCount ?? 0);
   const processedCount = Number(summary?.processedCount ?? actionSummary?.processed ?? currentPlayerSummary?.processedCount ?? 0);
@@ -275,6 +286,9 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     land,
     power,
     money,
+    banked,
+    bankCap,
+    banksCount,
     energy,
     food,
     water,

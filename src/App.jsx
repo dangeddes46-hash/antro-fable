@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -1522,6 +1522,7 @@ export default function App() {
   // enters browser-local saves.
   const [hostedExploreHours, setHostedExploreHours] = useState("24");
   const [hostedExploreSpend, setHostedExploreSpend] = useState("1000000");
+  const [hostedBankAmount, setHostedBankAmount] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2624,6 +2625,26 @@ export default function App() {
         }
         return null;
       },
+    });
+  }
+  async function submitHostedDevBankDeposit() {
+    const amount = Math.floor(Number(hostedBankAmount) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_BANK_DEPOSIT_ENDPOINT,
+      actionType: "hosted_bank_deposit",
+      requestBody: buildBankActionBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, amount }),
+      successMessage: "Deposit completed for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevBankWithdraw() {
+    const amount = Math.floor(Number(hostedBankAmount) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_BANK_WITHDRAW_ENDPOINT,
+      actionType: "hosted_bank_withdraw",
+      requestBody: buildBankActionBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, amount }),
+      successMessage: "Withdrawal completed for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
   async function submitHostedCompleteDueOrders(screen) {
@@ -5320,6 +5341,42 @@ export default function App() {
     </div>;
   }
 
+  function renderHostedBankPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("bank");
+    const banked = Math.max(0, Math.floor(hosted.banked));
+    const bankCap = Math.max(0, Math.floor(hosted.bankCap));
+    return <div className="grid gap-4">
+      <Panel title="Bank">
+        <p className="mb-3 text-orange-200">Hosted DEV Bank stores canonical server money. Each Bank protects 250,000 and generates interest each tick. Deposit and withdraw apply immediately.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Current tick", hosted.currentTick],
+          ["Money on hand", fmt(Math.max(0, Math.floor(hosted.money)))],
+          ["Banked / Capacity", `${fmt(banked)} / ${fmt(bankCap)}`],
+          ["Banks", fmt(Math.max(0, Math.floor(hosted.banksCount)))],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        <div className="mt-4 mb-4"><label className="block text-orange-300 mb-1">Deposit/Withdraw amount</label><TextInput value={hostedBankAmount} onChange={(v) => setHostedBankAmount(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-48" /></div>
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevBankDeposit} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_bank_deposit" ? "Depositing..." : "Deposit"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevBankWithdraw} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_bank_withdraw" ? "Withdrawing..." : "Withdraw"}</button>
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevManualTick} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_manual_tick" ? "Running manual DEV tick..." : "Run manual DEV tick"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
   function renderDestroy() {
     const requested = Object.fromEntries(Object.entries(destroyForm).map(([id, value]) => [id, parseQty(value)]));
     const destroyQty = totalBuildings(requested);
@@ -5441,7 +5498,7 @@ export default function App() {
       <Panel title={`Incoming ${resourceLabel("missiles")}`}>{incomingMissiles.length ? <table className="w-full text-sm"><tbody>{incomingMissiles.map((o) => <tr key={o.id} className="border-b border-orange-950"><td className="p-1">{fmt(o.quantity)} {String(resourceLabel("missiles")).toLowerCase()} from {o.source}</td><td className="p-1 text-right">{adminMode && <button className="classic-btn antro-action-btn" onClick={() => triggerIncomingMissileImpact(o.id)}>Trigger Impact</button>}</td></tr>)}</tbody></table> : <p>No incoming missiles.</p>}</Panel>
     </Panel>;
   }
-    function renderBank() { const cap = caps.bankCap; return <Panel title={pageLabel("bank")}><p className="mb-3 text-orange-200">Each {buildingLabel("banks")} protects 250,000 {currencyLabel} and generates interest.</p><OldTable rows={[["Banked/Capacity", `${fmt(player.banked)}/${fmt(cap)}`]]} /><div className="mt-4 mb-4"><label className="block text-orange-300 mb-1">Deposit/Withdraw</label><TextInput value={bankAmount} onChange={setBankAmount} className="w-48" /></div><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={depositBank}>{actionLabel("deposit")}</button><button className="classic-btn antro-action-btn" onClick={withdrawBank}>Withdraw</button><button className="classic-btn antro-action-btn" onClick={() => withdrawBankPercent(0.10)}>Withdraw 10%</button><button className="classic-btn antro-action-btn" onClick={() => withdrawBankPercent(1)}>Withdraw 100%</button><button className="classic-btn antro-action-btn" onClick={fillMaxBank}>Fill max</button></div></Panel>; }
+    function renderBank() { if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedBankPage(); const cap = caps.bankCap; return <Panel title={pageLabel("bank")}><p className="mb-3 text-orange-200">Each {buildingLabel("banks")} protects 250,000 {currencyLabel} and generates interest.</p><OldTable rows={[["Banked/Capacity", `${fmt(player.banked)}/${fmt(cap)}`]]} /><div className="mt-4 mb-4"><label className="block text-orange-300 mb-1">Deposit/Withdraw</label><TextInput value={bankAmount} onChange={setBankAmount} className="w-48" /></div><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={depositBank}>{actionLabel("deposit")}</button><button className="classic-btn antro-action-btn" onClick={withdrawBank}>Withdraw</button><button className="classic-btn antro-action-btn" onClick={() => withdrawBankPercent(0.10)}>Withdraw 10%</button><button className="classic-btn antro-action-btn" onClick={() => withdrawBankPercent(1)}>Withdraw 100%</button><button className="classic-btn antro-action-btn" onClick={fillMaxBank}>Fill max</button></div></Panel>; }
   function renderScience() { if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedSciencePage(); const notice = renderCompletionNotice("science"); if (notice) return notice; if (scienceOrder?.finishAt && !isFinishDue(scienceOrder.finishAt, displayNow)) return renderPendingOrderPanel(pageLabel("science"), "research", scienceOrder.finishAt, cancelScienceOrder); const labs = player.buildings.science_labs || 0; const effectiveMultiplier = scienceLabMultiplier(player.buildings); const selectedCurrentLevel = scienceLevels[scienceField] || 0; const selectedSeconds = scienceDurationSeconds(selectedCurrentLevel, player.buildings); return <Panel title={pageLabel("science")}><p className="mb-3 text-orange-200">Science is work in progress. Research time now uses a quadratic next-level curve calibrated to the old IG benchmark: with full labs and perfect utilisation, level 1 to 180 is roughly one 90-day x1 round. {pageLabel("science")} use the same 0/1k/4k curve as {pageLabel("barracks")}.</p><OldTable rows={[[pageLabel("science"), fmt(player.buildings.science_labs)], [`${pageLabel("science")} Speed`, `${effectiveMultiplier.toFixed(2)}x`], ["Selected Next Level", fmt(selectedCurrentLevel + 1)], ["Selected Research Time", durationHms(selectedSeconds / gameSpeed())], ["Active Research", scienceOrder ? `${scienceLabel(scienceOrder.field)} — ${remainingTimeLabel(scienceOrder.finishAt, displayNow)}` : "None"]]} /><table className="w-full text-sm mt-4 mb-4"><thead><tr className="text-orange-300 bg-[#240B02]"><th className="text-left p-1">Field</th><th className="text-right p-1">Level</th><th className="text-left p-1">Current Effect</th></tr></thead><tbody>{Object.keys(scienceLevels).map((field) => <tr key={field} className="border-b border-orange-950"><td className="p-1">{scienceLabel(field)}</td><td className="p-1 text-right">{fmt(scienceLevels[field])}</td><td className="p-1">{scienceEffect(field, scienceLevels[field])}</td></tr>)}</tbody></table><div className="mt-4 mb-4"><label className="block text-orange-300 mb-1">Research Field</label><select className="bg-black border border-orange-900 text-orange-100 px-2 py-1" value={scienceField} onChange={(e) => setScienceField(e.target.value)}>{Object.keys(scienceLevels).map((f) => <option key={f} value={f}>{scienceLabel(f)}</option>)}</select></div><div className="flex gap-2 flex-wrap mt-4"><button className="classic-btn antro-action-btn" onClick={startScienceResearch} disabled={!!scienceOrder}>{`Start ${actionLabel("research")}`}</button>{adminMode && <button className="classic-btn antro-action-btn" onClick={completeScienceResearch} disabled={!scienceOrder}>Trigger Finish Research</button>}{adminMode && <button className="classic-btn antro-action-btn" onClick={() => setPlayer((p) => ({ ...p, buildings: { ...p.buildings, science_labs: p.buildings.science_labs + 50 } }))}>{`Prototype: Add 50 ${pageLabel("science")}`}</button>}</div></Panel>; }
   function donateAllianceLand() { const amount = parseQty(donateAllianceLandAmount); if (!alliance) return addLog("You are not currently in an alliance."); if (amount <= 0) return addLog("Enter land to donate."); if (amount > player.freeLand) return addLog(`You only have ${fmt(player.freeLand)} free land.`); setPlayer((p) => ({ ...p, freeLand: p.freeLand - amount })); setAlliance((a) => normaliseAlliance({ ...a, bankLand: (a.bankLand || 0) + amount })); setDonateAllianceLandAmount(""); addLog(`${player.name} donated ${fmt(amount)} land to ${alliance.name}. Alliance total land is now ${fmt(allianceTotalLand({ ...alliance, bankLand: (alliance.bankLand || 0) + amount }))}.`); }
   function startAllianceBankBuild() { const qty = parseQty(allianceBankBuildQty); if (!alliance) return addLog("You are not currently in an alliance."); if (!isAllianceAdmin(player.name, alliance)) return addLog("Only the Leader or Co-Leader can build alliance banks."); if (qty <= 0) return addLog("Enter alliance banks to build."); if (alliance.bankOrder) return addLog("Alliance bank construction is already running."); if ((alliance.bankLand || 0) < qty) return addLog(`Alliance needs ${fmt(qty)} donated land. Current alliance land is ${fmt(alliance.bankLand || 0)}.`); const speed = normaliseAllianceBankSpeedFactor(allianceBankSpeedFactor); const cost = allianceBankBuildCost(qty, speed); if (player.cards < cost) return addLog(`You need ${fmt(cost)} Cardisium to build those alliance banks.`); const seconds = allianceBankBuildSeconds(qty, speed, alliance); setPlayer((p) => ({ ...p, cards: p.cards - cost })); setAlliance((a) => normaliseAlliance({ ...a, bankLand: (a.bankLand || 0) - qty, bankOrder: { quantity: qty, speedFactor: speed, cost, finishAt: Date.now() + realMillisecondsForGameSeconds(seconds), display: oldTime(seconds) } })); addLog(`Alliance bank construction started: ${fmt(qty)} banks at speed factor ${speed}, finished in ${oldTime(seconds)}. Cost: ${fmt(cost)} Cardisium.`); }
@@ -7249,6 +7306,7 @@ export default function App() {
       if (page === "barracks") return renderBarracks();
       if (page === "explore") return renderExplore();
       if (page === "science") return renderScience();
+      if (page === "bank") return renderBank();
       if (page === "todo") return renderHostedDiagnosticsPanel();
       return renderHostedPageUnavailable(page);
     }
