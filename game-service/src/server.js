@@ -294,6 +294,7 @@ app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) =>
       armies: result.armies,
       science: result.science,
       minerals: result.minerals,
+      marketListings: result.marketListings,
       factoryCount: result.factoryCount,
       queuedCount: result.queuedCount,
       processedCount: result.processedCount,
@@ -687,6 +688,68 @@ app.post('/api/dev/actions/shop-buy', requireDevEndpoints, async (req, res) => {
     });
   } catch (error) {
     sendErrorResponse(res, error, 'shop_buy_failed');
+  }
+});
+
+app.post('/api/dev/actions/market-list', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev market-list endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevMarketListInput(req.body || {});
+    const result = await marketListAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_market_list', listingId: result.listing.id, mineral: result.mineral, quantity: result.qty, price: result.price },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Listed ${result.qty} ${result.mineral} at ${result.price} each.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'market_list_failed');
+  }
+});
+
+app.post('/api/dev/actions/market-cancel', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev market-cancel endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevMarketCancelInput(req.body || {});
+    const result = await marketCancelAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_market_cancel', listingId: result.listingId, mineral: result.mineral, quantity: result.qty },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Cancelled a listing and reclaimed ${result.qty} ${result.mineral}.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'market_cancel_failed');
   }
 });
 
@@ -1127,6 +1190,35 @@ function normalizeDevShopInput(body) {
     throw createServiceError(400, 'invalid_amount', 'Shop quantity must be a positive whole number.');
   }
   return { ...identity, item, qty };
+}
+
+function normalizeDevMarketListInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  // Market lists minerals only (Food/Water/Energy are shop-only in the reference).
+  const mineral = normalizeText(String(body.mineral ?? body.mineralKey ?? body.mineral_key ?? ''));
+  if (!DEV_MINERAL_KEYS.includes(mineral)) {
+    throw createServiceError(400, 'invalid_mineral', `mineral must be one of: ${DEV_MINERAL_KEYS.join(', ')}.`);
+  }
+  const rawQty = body.quantity ?? body.qty ?? body.amount;
+  const qty = typeof rawQty === 'number' ? rawQty : Number(String(rawQty ?? '').trim());
+  if (!Number.isInteger(qty) || qty <= 0) {
+    throw createServiceError(400, 'invalid_amount', 'Listing quantity must be a positive whole number.');
+  }
+  const rawPrice = body.price;
+  const price = typeof rawPrice === 'number' ? rawPrice : Number(String(rawPrice ?? '').trim());
+  if (!Number.isInteger(price) || price <= 0) {
+    throw createServiceError(400, 'invalid_price', 'Listing price must be a positive whole number.');
+  }
+  return { ...identity, mineral, qty, price };
+}
+
+function normalizeDevMarketCancelInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const listingId = normalizeText(String(body.listingId ?? body.listing_id ?? body.id ?? ''));
+  if (!listingId) {
+    throw createServiceError(400, 'invalid_listing', 'Provide a listingId to cancel.');
+  }
+  return { ...identity, listingId };
 }
 
 function normalizeDevManualTickInput(body) {
@@ -1636,6 +1728,13 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
+  // Round-scoped shared order book: every player sees the same active listings,
+  // so this is NOT filtered by playerIds (unlike the K/V snapshot tables above).
+  const marketListingRows = await fetchRows(
+    'multiplayer_market_listings',
+    'id, round_id, seller_player_id, mineral_key, quantity, price, status, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('status', 'active').order('created_at', { ascending: true })
+  );
   const latestResetEvent = await fetchSingleRow(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
@@ -1716,10 +1815,13 @@ async function readDevRoundSummary(roundKey) {
   const canonicalPlayers = formattedPlayers.filter((player) => player.isGrantLinked);
   const totalFactoryCount = (canonicalPlayers.length > 0 ? canonicalPlayers : formattedPlayers).reduce((sum, player) => sum + Number(player.factoryCount || 0), 0);
   const recentPublicEventTitles = recentEvents.slice(0, 3).map((event) => event.title || event.event_type || 'Event');
+  const displayNameByPlayerId = new Map(players.map((player) => [player.id, player.display_name]));
+  const marketListings = marketListingRows.map((row) => formatMarketListing(row, displayNameByPlayerId));
 
   return {
     round: formatRound(round),
     players: formattedPlayers,
+    marketListings,
     recentActions: recentActions.map(formatActionQueue),
     recentTickLogs: recentTickLogs.map(formatTickLog),
     recentPublicEvents: recentEvents.map(formatEvent),
@@ -1808,6 +1910,7 @@ async function readHostedRoundEntryState(hostedInput) {
     armies: currentPlayerArmies,
     science: currentPlayerScience,
     minerals: currentPlayerMinerals,
+    marketListings: summary.marketListings || [],
     factoryCount: currentPlayerFactoryCount,
     queuedCount: currentPlayerQueuedCount,
     processedCount: currentPlayerProcessedCount,
@@ -1837,6 +1940,7 @@ async function readHostedRoundEntryState(hostedInput) {
       armies: currentPlayerArmies,
       science: currentPlayerScience,
       minerals: currentPlayerMinerals,
+      marketListings: summary.marketListings || [],
       actionSummary: {
         total: actionSummary.total,
         queued: actionSummary.queued + actionSummary.processing,
@@ -2949,6 +3053,178 @@ async function shopBuyAction(actionInput) {
   }).catch(() => {});
 
   return { round, player, item, qty, price, cost, money: newMoney, creditedTo };
+}
+
+// Reads a player's single mineral row, ensuring the K/V rows exist first.
+async function readPlayerMineralRow(round, playerId, mineral) {
+  await getOrCreatePlayerMinerals(round.id, playerId);
+  return fetchSingleRow(
+    'multiplayer_player_minerals',
+    'id, player_id, round_id, mineral_key, count, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('player_id', playerId).eq('mineral_key', mineral)
+  );
+}
+
+// Instant Market List — port of createMarketSellOrder (src/App.jsx). Self-only
+// write (escrows the seller's own minerals into a shared listing); the
+// cross-player Buy is sub-slice 6c and is NOT here.
+//
+// Escrow ordering: the minerals debit is the LAST, gated step, so a listing
+// FAILURE can never leave minerals debited with no listing. We insert the
+// listing first, then re-read + decrement the seller's mineral row; if that
+// decrement can't complete, we delete the just-created listing (compensation).
+// The only residual on a double failure (decrement fails AND the compensating
+// delete fails) is a listing whose minerals were not escrowed — the safe
+// direction (no lost minerals); 6c's buy path re-verifies escrow under a lock.
+// True single-statement atomicity would require a transaction/RPC, deferred to
+// 6c where the cross-player money transfer lives.
+async function marketListAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+  const mineral = actionInput.mineral;
+  const qty = actionInput.qty;
+  const price = actionInput.price;
+
+  // Price ceiling: the shop price for this mineral (reference hard cap).
+  const shopPrice = DEV_SHOP_PRICES[mineral];
+  if (price > shopPrice) {
+    throw createServiceError(400, 'price_above_shop_cap', `Listing price cannot exceed the shop cost for ${mineral}: ${shopPrice}.`);
+  }
+
+  // Ownership: the seller must genuinely hold >= qty in their canonical row.
+  const mineralRow = await readPlayerMineralRow(round, player.id, mineral);
+  const owned = Math.max(0, Math.floor(Number(mineralRow?.count ?? 0)));
+  if (owned < qty) {
+    throw createServiceError(400, 'insufficient_minerals', `You do not have ${qty} ${mineral} to list (you hold ${owned}).`);
+  }
+
+  const listedAt = nowIso();
+  const listing = await insertSingleRow('multiplayer_market_listings', {
+    round_id: round.id,
+    seller_player_id: player.id,
+    mineral_key: mineral,
+    quantity: qty,
+    price,
+    status: 'active',
+    updated_at: listedAt,
+  });
+
+  // Debit is last and compensated: on any failure, remove the listing so we
+  // never leave a debit without a listing (or a listing without a debit that
+  // could be bought — Buy does not exist yet).
+  try {
+    const freshRow = await readPlayerMineralRow(round, player.id, mineral);
+    const freshOwned = Math.max(0, Math.floor(Number(freshRow?.count ?? 0)));
+    if (freshOwned < qty) {
+      throw createServiceError(409, 'insufficient_minerals', `Your ${mineral} stockpile changed; the listing was not created.`);
+    }
+    await upsertRow('multiplayer_player_minerals', {
+      round_id: round.id,
+      player_id: player.id,
+      mineral_key: mineral,
+      count: freshOwned - qty,
+      updated_at: nowIso(),
+    }, 'player_id,round_id,mineral_key');
+  } catch (error) {
+    await deleteRows('multiplayer_market_listings', (query) => query.eq('id', listing.id)).catch(() => {});
+    throw error;
+  }
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_market_list',
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Market listing created',
+    body: `${player.display_name} listed ${qty} ${mineral} at ${price} each.`,
+    payload: { actionType: 'dev_market_list', listingId: listing.id, mineral, quantity: qty, price },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_market_list',
+    event_data: { round_id: round.id, round_key: round.round_key, player_id: player.id, display_name: player.display_name, listing_id: listing.id, mineral, quantity: qty, price, escrowed_from: owned, escrowed_to: owned - qty },
+  }).catch(() => {});
+
+  return { round, player, listing: { ...listing, quantity: qty, price, mineral_key: mineral, status: 'active' }, mineral, qty, price };
+}
+
+// Instant Market Cancel — port of cancelMarketOrder (src/App.jsx). Own listings
+// only; ownership is derived from the grant-resolved player, NEVER a
+// client-claimed identity. Un-escrows the listed minerals back to the seller.
+//
+// Ordering: mark the listing cancelled FIRST (so it can never be bought while we
+// credit), then credit the minerals back; if the credit fails, re-activate the
+// listing (compensation) so goods are not lost. The dangerous direction —
+// minerals returned while the listing stays buyable (duplication) — is thereby
+// prevented.
+async function marketCancelAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+  const listingId = actionInput.listingId;
+
+  const listing = await fetchSingleRow(
+    'multiplayer_market_listings',
+    'id, round_id, seller_player_id, mineral_key, quantity, price, status, created_at, updated_at',
+    (query) => query.eq('round_id', round.id).eq('id', listingId)
+  );
+  if (!listing || listing.status !== 'active') {
+    throw createServiceError(404, 'listing_not_found', 'That market listing was not found or is no longer active.');
+  }
+  // Server-derived ownership — never trust a client-claimed seller.
+  if (listing.seller_player_id !== player.id) {
+    throw createServiceError(403, 'not_your_listing', 'You can only cancel your own market listings.');
+  }
+
+  const mineral = listing.mineral_key;
+  const qty = Math.max(0, Math.floor(Number(listing.quantity ?? 0)));
+  const cancelledAt = nowIso();
+
+  await updateSingleRow('multiplayer_market_listings', {
+    status: 'cancelled',
+    updated_at: cancelledAt,
+  }, (query) => query.eq('id', listing.id));
+
+  try {
+    const mineralRow = await readPlayerMineralRow(round, player.id, mineral);
+    const owned = Math.max(0, Math.floor(Number(mineralRow?.count ?? 0)));
+    await upsertRow('multiplayer_player_minerals', {
+      round_id: round.id,
+      player_id: player.id,
+      mineral_key: mineral,
+      count: owned + qty,
+      updated_at: nowIso(),
+    }, 'player_id,round_id,mineral_key');
+  } catch (error) {
+    // Re-activate so the seller's escrowed goods are not lost.
+    await updateSingleRow('multiplayer_market_listings', {
+      status: 'active',
+      updated_at: nowIso(),
+    }, (query) => query.eq('id', listing.id)).catch(() => {});
+    throw error;
+  }
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_market_cancel',
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Market listing cancelled',
+    body: `${player.display_name} cancelled a listing and reclaimed ${qty} ${mineral}.`,
+    payload: { actionType: 'dev_market_cancel', listingId: listing.id, mineral, quantity: qty },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_market_cancel',
+    event_data: { round_id: round.id, round_key: round.round_key, player_id: player.id, display_name: player.display_name, listing_id: listing.id, mineral, quantity: qty },
+  }).catch(() => {});
+
+  return { round, player, listingId: listing.id, mineral, qty };
 }
 
 async function runManualDevTick(tickInput) {
@@ -4397,6 +4673,16 @@ async function upsertRow(tableName, values, onConflict) {
   return data;
 }
 
+async function deleteRows(tableName, filterFn) {
+  const query = SUPABASE_CLIENT.from(tableName).delete();
+  const filtered = filterFn(query);
+  const { error } = await filtered;
+
+  if (error) {
+    throw Object.assign(new Error(error.message), { code: error.code || 'supabase_delete_failed' });
+  }
+}
+
 function getDevSeedMarker(seedInput) {
   return `dev-seed:${seedInput.roundKey}:${seedInput.playerKey}`;
 }
@@ -4484,6 +4770,20 @@ function formatMineralRows(rows) {
     mineralKey: row.mineral_key,
     count: row.count,
   }));
+}
+
+function formatMarketListing(row, displayNameByPlayerId) {
+  const sellerId = row.seller_player_id;
+  return {
+    id: row.id,
+    sellerPlayerId: sellerId,
+    sellerDisplayName: (displayNameByPlayerId && displayNameByPlayerId.get(sellerId)) || null,
+    mineralKey: row.mineral_key,
+    quantity: Number(row.quantity || 0),
+    price: Number(row.price || 0),
+    status: row.status,
+    createdAt: row.created_at,
+  };
 }
 
 function normalizeHostedMineralSummary(rows = []) {
