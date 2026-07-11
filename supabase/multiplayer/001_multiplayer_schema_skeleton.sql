@@ -210,6 +210,24 @@ create index if not exists idx_multiplayer_player_science_player_id on public.mu
 create index if not exists idx_multiplayer_player_science_round_id on public.multiplayer_player_science (round_id);
 create index if not exists idx_multiplayer_player_science_round_player on public.multiplayer_player_science (round_id, player_id);
 
+create table if not exists public.multiplayer_player_minerals (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid not null references public.multiplayer_players (id),
+  round_id uuid not null references public.multiplayer_rounds (id),
+  mineral_key text not null,
+  count numeric not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz,
+  constraint multiplayer_player_minerals_player_round_mineral_unique unique (player_id, round_id, mineral_key),
+  constraint multiplayer_player_minerals_count_check check (count >= 0)
+);
+
+comment on table public.multiplayer_player_minerals is 'Snapshot table for per-mineral stockpile counts per player and round (one row per mineral). Server updates this as canonical state.';
+
+create index if not exists idx_multiplayer_player_minerals_player_id on public.multiplayer_player_minerals (player_id);
+create index if not exists idx_multiplayer_player_minerals_round_id on public.multiplayer_player_minerals (round_id);
+create index if not exists idx_multiplayer_player_minerals_round_player on public.multiplayer_player_minerals (round_id, player_id);
+
 create table if not exists public.multiplayer_alliances (
   id uuid primary key default gen_random_uuid(),
   round_id uuid not null references public.multiplayer_rounds (id),
