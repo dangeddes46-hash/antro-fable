@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_SHOP_BUY_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, buildShopBuyBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -1523,6 +1523,8 @@ export default function App() {
   const [hostedExploreHours, setHostedExploreHours] = useState("24");
   const [hostedExploreSpend, setHostedExploreSpend] = useState("1000000");
   const [hostedBankAmount, setHostedBankAmount] = useState("");
+  const [hostedShopItem, setHostedShopItem] = useState("Arthok");
+  const [hostedShopQty, setHostedShopQty] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2644,6 +2646,17 @@ export default function App() {
       actionType: "hosted_bank_withdraw",
       requestBody: buildBankActionBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, amount }),
       successMessage: "Withdrawal completed for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevShopBuy() {
+    const item = hostedShopItem;
+    const qty = Math.floor(Number(hostedShopQty) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_SHOP_BUY_ENDPOINT,
+      actionType: "hosted_shop_buy",
+      requestBody: buildShopBuyBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, item, qty }),
+      successMessage: "Shop purchase completed for hosted round.",
       onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
@@ -5377,6 +5390,52 @@ export default function App() {
     </div>;
   }
 
+  function renderHostedShopsPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("shops");
+    const shopStockpile = (item) => {
+      if (item === "Food") return Math.max(0, Math.floor(hosted.food));
+      if (item === "Water") return Math.max(0, Math.floor(hosted.water));
+      if (item === "Energy") return Math.max(0, Math.floor(hosted.energy));
+      return Math.max(0, Math.floor(Number(hosted.mineralsByKey?.[item]?.count ?? 0)));
+    };
+    const selectedPrice = shopPrices[hostedShopItem] || 0;
+    const selectedQty = Math.max(0, Math.floor(Number(hostedShopQty) || 0));
+    const selectedCost = selectedQty * selectedPrice;
+    return <div className="grid gap-4">
+      <Panel title="Shops">
+        <p className="mb-3 text-orange-200">Hosted DEV Shops buys food, water, energy and minerals from the game-service at fixed prices. Purchases apply immediately to your canonical stockpile.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Current tick", hosted.currentTick],
+          ["Money on hand", fmt(Math.max(0, Math.floor(hosted.money)))],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        <table className="w-full text-sm mt-4 mb-4"><thead><tr className="text-orange-300 bg-[#240B02]"><th className="text-left p-1">Item</th><th className="text-right p-1">Shop Price</th><th className="text-right p-1">Your Stockpile</th></tr></thead><tbody>{shopItemOrder.map((m) => <tr key={m} className="border-b border-orange-950"><td className="p-1">{shopItemLabel(m)}</td><td className="p-1 text-right">{shopPrices[m] ? fmt(shopPrices[m]) : "Not sold"}</td><td className="p-1 text-right">{fmt(shopStockpile(m))}</td></tr>)}</tbody></table>
+        <div className="flex gap-2 flex-wrap items-center mb-2">
+          <select className="bg-black border border-orange-900 text-orange-100 px-2 py-1" value={hostedShopItem} onChange={(e) => setHostedShopItem(e.target.value)}>
+            {shopItemOrder.map((m) => <option key={m} value={m}>{shopItemLabel(m)}</option>)}
+          </select>
+          <TextInput value={hostedShopQty} onChange={(v) => setHostedShopQty(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-28" placeholder="Qty" />
+          <span className="text-xs text-orange-500">Cost: {fmt(selectedCost)} {currencyLabel}</span>
+          <button className="classic-btn antro-action-btn" onClick={submitHostedDevShopBuy} disabled={hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId || selectedQty <= 0}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_shop_buy" ? "Buying..." : "Buy from Shop"}</button>
+        </div>
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
   function renderDestroy() {
     const requested = Object.fromEntries(Object.entries(destroyForm).map(([id, value]) => [id, parseQty(value)]));
     const destroyQty = totalBuildings(requested);
@@ -5811,6 +5870,7 @@ export default function App() {
   }
 
   function renderShops() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedShopsPage();
     const price = shopPrices[shopMineral] || 0;
     const qty = parseQty(shopQty);
     const cost = price * qty;
@@ -7307,6 +7367,7 @@ export default function App() {
       if (page === "explore") return renderExplore();
       if (page === "science") return renderScience();
       if (page === "bank") return renderBank();
+      if (page === "shops") return renderShops();
       if (page === "todo") return renderHostedDiagnosticsPanel();
       return renderHostedPageUnavailable(page);
     }

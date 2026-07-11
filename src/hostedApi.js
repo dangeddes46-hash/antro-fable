@@ -31,6 +31,8 @@ export const HOSTED_QUEUE_SCIENCE_ENDPOINT = "/api/dev/actions/queue-science";
 // and banked immediately, mirroring the local Bank screen.
 export const HOSTED_BANK_DEPOSIT_ENDPOINT = "/api/dev/actions/bank-deposit";
 export const HOSTED_BANK_WITHDRAW_ENDPOINT = "/api/dev/actions/bank-withdraw";
+// Shop purchase is also INSTANT and self-only (no order book / Market here).
+export const HOSTED_SHOP_BUY_ENDPOINT = "/api/dev/actions/shop-buy";
 // Orders finish after a real duration (in round ticks) but only apply when the
 // player visits the matching screen; the visit calls this endpoint.
 export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
@@ -189,6 +191,8 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "no_banked_funds") return "You have no banked money to withdraw.";
   if (errorCode === "bank_deposit_failed") return "The deposit could not be completed.";
   if (errorCode === "bank_withdraw_failed") return "The withdrawal could not be completed.";
+  if (errorCode === "item_not_sold") return "That item is not sold in the shop.";
+  if (errorCode === "shop_buy_failed") return "The shop purchase could not be completed.";
   if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

@@ -96,6 +96,13 @@ export function buildBankActionBody({ hostedSummary, testerAccessRecord, amount 
     amount,
   };
 }
+export function buildShopBuyBody({ hostedSummary, testerAccessRecord, item, qty }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    item,
+    qty,
+  };
+}
 // Seven research fields from the hosted science summary, with the reference
 // labels and a display-only next-level duration (scienceDurationSeconds,
 // src/gameMath.js — quadratic in currentLevel+1 over the lab curve). The server
@@ -219,6 +226,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const buildings = summary?.buildings || null;
   const armies = summary?.armies || null;
   const science = summary?.science || null;
+  const minerals = summary?.minerals || null;
   const actionSummary = summary?.actionSummary || null;
   const recentEvents = Array.isArray(summary?.recentEvents) ? summary.recentEvents : [];
   const otherPlayers = Array.isArray(summary?.otherPlayers) ? summary.otherPlayers : [];
@@ -249,6 +257,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const armyRows = hostedArmyRows(armies, raceKey);
   const scienceLabsCount = Number(buildings?.byKey?.science_labs?.count ?? buildings?.scienceLabs ?? buildings?.science_labs ?? 0);
   const scienceRows = hostedScienceRows(science, scienceLabsCount);
+  const mineralsByKey = minerals && typeof minerals === "object" && minerals.byKey && typeof minerals.byKey === "object" ? minerals.byKey : {};
   // Bank cap mirrors the reference calcCaps.bankCap: banks * 250000 * banking bonus.
   const banksCount = Number(buildings?.byKey?.bank?.count ?? buildings?.bank ?? buildings?.banks ?? 0);
   const bankingLevel = Number(science?.levels?.banking ?? 0);
@@ -293,6 +302,7 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     food,
     water,
     population,
+    mineralsByKey,
     currentTick,
     roundKey,
     roundName,
