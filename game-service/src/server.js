@@ -659,6 +659,37 @@ app.post('/api/dev/actions/bank-withdraw', requireDevEndpoints, async (req, res)
   }
 });
 
+app.post('/api/dev/actions/shop-buy', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev shop-buy endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevShopInput(req.body || {});
+    const result = await shopBuyAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_shop_buy', item: result.item, qty: result.qty, price: result.price, cost: result.cost, money: result.money, creditedTo: result.creditedTo },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Bought ${result.qty} ${result.item} from the shop for ${result.cost}.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'shop_buy_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -1081,6 +1112,21 @@ function normalizeDevBankInput(body) {
     throw createServiceError(400, 'invalid_amount', 'Bank amount must be a positive whole number.');
   }
   return { ...identity, amount };
+}
+
+function normalizeDevShopInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const item = normalizeText(String(body.item ?? body.shopItem ?? body.mineral ?? ''));
+  if (!Object.prototype.hasOwnProperty.call(DEV_SHOP_PRICES, item)) {
+    throw createServiceError(400, 'item_not_sold', 'That item is not sold in the shop.');
+  }
+  const rawQty = body.qty ?? body.quantity ?? body.amount;
+  const qty = typeof rawQty === 'number' ? rawQty : Number(String(rawQty ?? '').trim());
+  // Reference parseQty: only positive integers are valid quantities.
+  if (!Number.isInteger(qty) || qty <= 0) {
+    throw createServiceError(400, 'invalid_amount', 'Shop quantity must be a positive whole number.');
+  }
+  return { ...identity, item, qty };
 }
 
 function normalizeDevManualTickInput(body) {
@@ -2826,6 +2872,83 @@ async function bankWithdrawAction(actionInput) {
   }).catch(() => {});
 
   return { round, player, requested: amount, withdrawn: actual, money: newMoney, banked: newBanked, bankCap };
+}
+
+// Instant Shop purchase — port of buyShopMinerals (src/App.jsx). Self-only, no
+// second party, no order book. Buys at the fixed shopPrices; debits money and
+// credits the item (Food/Water/Energy -> state column, minerals -> mineral row).
+async function shopBuyAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+  const item = actionInput.item;
+  const qty = actionInput.qty;
+  const price = DEV_SHOP_PRICES[item];
+  const cost = qty * price;
+
+  const stateResult = await getOrCreatePlayerState(round.id, player.id);
+  const stateRow = stateResult.row;
+  const money = Math.max(0, Number(stateRow.money || 0));
+  if (cost > money) {
+    throw createServiceError(400, 'insufficient_funds', `Not enough money for that purchase: it costs ${cost} and ${money} is available.`);
+  }
+  const newMoney = money - cost;
+  const at = nowIso();
+  const stateColumn = DEV_SHOP_STATE_COLUMN[item] || null;
+
+  let creditedTo;
+  if (stateColumn) {
+    // Food / Water / Energy live as state columns.
+    const oldCount = Math.max(0, Number(stateRow[stateColumn] || 0));
+    await updateSingleRow('multiplayer_player_state', {
+      money: newMoney,
+      [stateColumn]: oldCount + qty,
+      state_version: Number(stateRow.state_version || 0) + 1,
+      updated_at: at,
+    }, (query) => query.eq('id', stateRow.id));
+    creditedTo = { kind: 'state', column: stateColumn, oldCount, newCount: oldCount + qty };
+  } else {
+    // Minerals live in the K/V table.
+    await updateSingleRow('multiplayer_player_state', {
+      money: newMoney,
+      state_version: Number(stateRow.state_version || 0) + 1,
+      updated_at: at,
+    }, (query) => query.eq('id', stateRow.id));
+    await getOrCreatePlayerMinerals(round.id, player.id);
+    const mineralRow = await fetchSingleRow(
+      'multiplayer_player_minerals',
+      'id, player_id, round_id, mineral_key, count, created_at, updated_at',
+      (query) => query.eq('round_id', round.id).eq('player_id', player.id).eq('mineral_key', item)
+    );
+    const oldCount = Math.max(0, Number(mineralRow?.count ?? 0));
+    await upsertRow('multiplayer_player_minerals', {
+      round_id: round.id,
+      player_id: player.id,
+      mineral_key: item,
+      count: oldCount + qty,
+      updated_at: at,
+    }, 'player_id,round_id,mineral_key');
+    creditedTo = { kind: 'mineral', mineralKey: item, oldCount, newCount: oldCount + qty };
+  }
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_shop_buy',
+    visibility: 'public',
+    actor_player_id: player.id,
+    title: 'Shop purchase',
+    body: `${player.display_name} bought ${qty} ${item} from the shop for ${cost}.`,
+    payload: { actionType: 'dev_shop_buy', item, qty, price, cost, money: newMoney },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_shop_buy',
+    event_data: { round_id: round.id, round_key: round.round_key, player_id: player.id, display_name: player.display_name, item, qty, price, cost, money: newMoney, credited_to: creditedTo },
+  }).catch(() => {});
+
+  return { round, player, item, qty, price, cost, money: newMoney, creditedTo };
 }
 
 async function runManualDevTick(tickInput) {
