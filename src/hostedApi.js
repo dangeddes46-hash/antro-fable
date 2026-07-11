@@ -33,6 +33,11 @@ export const HOSTED_BANK_DEPOSIT_ENDPOINT = "/api/dev/actions/bank-deposit";
 export const HOSTED_BANK_WITHDRAW_ENDPOINT = "/api/dev/actions/bank-withdraw";
 // Shop purchase is also INSTANT and self-only (no order book / Market here).
 export const HOSTED_SHOP_BUY_ENDPOINT = "/api/dev/actions/shop-buy";
+// Market List/Cancel are INSTANT self-only actions on the round-scoped order
+// book. List escrows the seller's own minerals; Cancel un-escrows them. Buy (the
+// cross-player money transfer) is NOT here — that is sub-slice 6c.
+export const HOSTED_MARKET_LIST_ENDPOINT = "/api/dev/actions/market-list";
+export const HOSTED_MARKET_CANCEL_ENDPOINT = "/api/dev/actions/market-cancel";
 // Orders finish after a real duration (in round ticks) but only apply when the
 // player visits the matching screen; the visit calls this endpoint.
 export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
@@ -193,6 +198,15 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "bank_withdraw_failed") return "The withdrawal could not be completed.";
   if (errorCode === "item_not_sold") return "That item is not sold in the shop.";
   if (errorCode === "shop_buy_failed") return "The shop purchase could not be completed.";
+  if (errorCode === "invalid_mineral") return "That mineral cannot be listed on the market.";
+  if (errorCode === "invalid_price") return "Listing price must be a positive whole number.";
+  if (errorCode === "invalid_listing") return "That market listing could not be identified.";
+  if (errorCode === "price_above_shop_cap") return "Listing price cannot exceed the shop cost for that mineral.";
+  if (errorCode === "insufficient_minerals") return "You do not have that many of that mineral to list.";
+  if (errorCode === "listing_not_found") return "That market listing was not found or is no longer active.";
+  if (errorCode === "not_your_listing") return "You can only cancel your own market listings.";
+  if (errorCode === "market_list_failed") return "The market listing could not be created.";
+  if (errorCode === "market_cancel_failed") return "The market listing could not be cancelled.";
   if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

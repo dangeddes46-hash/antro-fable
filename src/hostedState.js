@@ -103,6 +103,25 @@ export function buildShopBuyBody({ hostedSummary, testerAccessRecord, item, qty 
     qty,
   };
 }
+// Market List escrows the seller's own minerals into the shared order book. The
+// seller identity is resolved server-side from the grant, never sent here.
+export function buildMarketListBody({ hostedSummary, testerAccessRecord, mineral, quantity, price }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    mineral,
+    quantity,
+    price,
+  };
+}
+// Market Cancel identifies the listing by id only; the server re-derives the
+// owner from the grant and rejects cancelling anyone else's listing — we never
+// send a client-claimed "this is mine" flag.
+export function buildMarketCancelBody({ hostedSummary, testerAccessRecord, listingId }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    listingId,
+  };
+}
 // Seven research fields from the hosted science summary, with the reference
 // labels and a display-only next-level duration (scienceDurationSeconds,
 // src/gameMath.js — quadratic in currentLevel+1 over the lab curve). The server
@@ -180,7 +199,13 @@ export function normalisePreviewSummary(result) {
   };
 }
 export function normaliseHostedRoundSummary(result, grantId) {
+  // Pass-through: spread the server payload first, then re-apply the explicit
+  // coercions/defaults below. New server fields (e.g. marketListings) survive
+  // automatically — this avoids the whitelist-drop footgun where a field added
+  // server-side silently vanished here because it wasn't re-listed.
+  const source = result && typeof result === "object" ? result : {};
   return {
+    ...source,
     round: result?.round || null,
     player: result?.player || null,
     playerState: result?.playerState || null,
@@ -188,6 +213,7 @@ export function normaliseHostedRoundSummary(result, grantId) {
     armies: result?.armies || null,
     science: result?.science || null,
     minerals: result?.minerals || null,
+    marketListings: Array.isArray(result?.marketListings) ? result.marketListings : [],
     actionSummary: result?.actionSummary || null,
     recentEvents: Array.isArray(result?.recentEvents) ? result.recentEvents : [],
     otherPlayers: Array.isArray(result?.otherPlayers) ? result.otherPlayers : [],
@@ -273,6 +299,10 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
   const latestResetLabel = latestResetAt ? new Date(latestResetAt).toLocaleString() : "No proof reset yet";
   const latestResetEventLabel = latestResetEvent ? `${latestResetEvent.eventType || latestResetEvent.visibility || "Reset event"} · ${latestResetEvent.id ? maskStableIdentifier(latestResetEvent.id) : "unknown"}` : "No reset event yet";
   const otherPlayerSummary = otherPlayers.length ? otherPlayers.slice(0, 4).map((other) => other.displayName || other.testerLabel || maskStableIdentifier(other.id || "") || "Unknown").join(", ") : "None";
+  const marketListings = Array.isArray(summary?.marketListings) ? summary.marketListings : [];
+  // Ownership for the Cancel UI is derived from the resolved player id, matching
+  // the server's server-derived check — never from a display name or client claim.
+  const myMarketListings = playerId ? marketListings.filter((listing) => listing.sellerPlayerId === playerId) : [];
   return {
     summary,
     round,
@@ -304,6 +334,8 @@ export function buildHostedShellSnapshot({ hostedRoundState, identitySummary, te
     water,
     population,
     mineralsByKey,
+    marketListings,
+    myMarketListings,
     currentTick,
     roundKey,
     roundName,

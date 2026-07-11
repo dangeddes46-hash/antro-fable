@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_SHOP_BUY_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_SHOP_BUY_ENDPOINT, HOSTED_MARKET_LIST_ENDPOINT, HOSTED_MARKET_CANCEL_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, buildShopBuyBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, buildShopBuyBody, buildMarketListBody, buildMarketCancelBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -1525,6 +1525,9 @@ export default function App() {
   const [hostedBankAmount, setHostedBankAmount] = useState("");
   const [hostedShopItem, setHostedShopItem] = useState("Arthok");
   const [hostedShopQty, setHostedShopQty] = useState("");
+  const [hostedMarketMineral, setHostedMarketMineral] = useState("Arthok");
+  const [hostedMarketQty, setHostedMarketQty] = useState("");
+  const [hostedMarketPrice, setHostedMarketPrice] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2657,6 +2660,27 @@ export default function App() {
       actionType: "hosted_shop_buy",
       requestBody: buildShopBuyBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, item, qty }),
       successMessage: "Shop purchase completed for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevMarketList() {
+    const mineral = hostedMarketMineral;
+    const quantity = Math.floor(Number(hostedMarketQty) || 0);
+    const price = Math.floor(Number(hostedMarketPrice) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_MARKET_LIST_ENDPOINT,
+      actionType: "hosted_market_list",
+      requestBody: buildMarketListBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, mineral, quantity, price }),
+      successMessage: "Market listing created for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevMarketCancel(listingId) {
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_MARKET_CANCEL_ENDPOINT,
+      actionType: "hosted_market_cancel",
+      requestBody: buildMarketCancelBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, listingId }),
+      successMessage: "Market listing cancelled for hosted round.",
       onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
@@ -5390,6 +5414,59 @@ export default function App() {
     </div>;
   }
 
+  function renderHostedMarketPage() {
+    const hosted = getHostedShellSnapshot();
+    if (!hosted.summary) return renderHostedPageUnavailable("market");
+    const ownedSelected = Math.max(0, Math.floor(Number(hosted.mineralsByKey?.[hostedMarketMineral]?.count ?? 0)));
+    const priceCap = Math.max(0, Math.floor(Number(shopPrices[hostedMarketMineral] || 0)));
+    const selectedQty = Math.max(0, Math.floor(Number(hostedMarketQty) || 0));
+    const selectedPrice = Math.max(0, Math.floor(Number(hostedMarketPrice) || 0));
+    const listings = Array.isArray(hosted.marketListings) ? hosted.marketListings : [];
+    const priceOverCap = selectedPrice > priceCap;
+    const notEnough = selectedQty > ownedSelected;
+    const listDisabled = hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId || selectedQty <= 0 || selectedPrice <= 0 || priceOverCap || notEnough;
+    const validationNote = selectedQty <= 0 ? "Enter a quantity to list" : notEnough ? "Not enough of that mineral" : selectedPrice <= 0 ? "Enter a price each" : priceOverCap ? `Price cannot exceed shop cost (${fmt(priceCap)})` : "OK";
+    return <div className="grid gap-4">
+      <Panel title="Market">
+        <p className="mb-3 text-orange-200">Hosted DEV Market lists minerals into a shared, round-scoped order book. Listing escrows the minerals out of your stockpile until you cancel. Buying from other players is not enabled in this build.</p>
+        <OldTable rows={[
+          ["Mode", "Hosted DEV Round"],
+          ["Current browser identity", hosted.playerLabel],
+          ["Round name", hosted.roundName],
+          ["Round key", hosted.roundKey],
+          ["Current tick", hosted.currentTick],
+          ["Last hosted refresh", hosted.lastFetchLabel],
+        ]} />
+        <Panel title="Create Sell Order">
+          <div className="flex gap-2 flex-wrap items-center mb-2">
+            <select className="bg-black border border-orange-900 text-orange-100 px-2 py-1" value={hostedMarketMineral} onChange={(e) => setHostedMarketMineral(e.target.value)}>
+              {mineralOrder.map((m) => <option key={m} value={m}>{mineralLabel(m)}</option>)}
+            </select>
+            <TextInput value={hostedMarketQty} onChange={(v) => setHostedMarketQty(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-28" placeholder="Qty" />
+            <TextInput value={hostedMarketPrice} onChange={(v) => setHostedMarketPrice(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-32" placeholder="Price each" />
+            <button className="classic-btn antro-action-btn" onClick={() => setHostedMarketQty(String(ownedSelected))}>Fill Owned</button>
+            <button className="classic-btn antro-action-btn" onClick={() => setHostedMarketPrice(String(priceCap))}>Shop Price</button>
+            <button className="classic-btn antro-action-btn" onClick={submitHostedDevMarketList} disabled={listDisabled}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_market_list" ? "Listing..." : "List Minerals"}</button>
+          </div>
+          <p className="text-xs text-orange-500">Current stock: {fmt(ownedSelected)} {mineralLabel(hostedMarketMineral)}. Shop price cap: {fmt(priceCap)} each. Validation: {validationNote}</p>
+        </Panel>
+        <table className="w-full text-sm mt-4"><thead><tr className="text-orange-300 bg-[#240B02]"><th className="text-left p-1">Seller</th><th className="text-left p-1">Mineral</th><th className="text-right p-1">Quantity</th><th className="text-right p-1">Price Each</th><th className="text-right p-1">Action</th></tr></thead><tbody>{listings.length ? listings.map((o) => {
+          const isMine = o.sellerPlayerId === hosted.playerId;
+          return <tr key={o.id} className="border-b border-orange-950"><td className="p-1">{o.sellerDisplayName || "Unknown"}{isMine ? " (you)" : ""}</td><td className="p-1">{mineralLabel(o.mineralKey)}</td><td className="p-1 text-right">{fmt(o.quantity)}</td><td className="p-1 text-right">{fmt(o.price)}</td><td className="p-1 text-right">{isMine ? <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevMarketCancel(o.id)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>Cancel</button> : <span className="text-xs text-orange-600">Buy unavailable</span>}</td></tr>;
+        }) : <tr><td className="p-2 text-orange-600" colSpan={5}>No active market listings.</td></tr>}</tbody></table>
+        {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
+        {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
+        {multiplayerDevActionState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{multiplayerDevActionState.error}</div> : null}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button className="classic-btn antro-action-btn" onClick={enterHostedDevRound} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>{hostedRoundState.loading ? "Refreshing hosted state..." : "Refresh hosted state"}</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+          <button className="classic-btn antro-action-btn" onClick={returnToBaseScreen}>{activeGameMode === "hosted" && hostedRoundState.summary ? "Return to Local Launcher" : "Return to Launcher"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
+  }
+
   function renderHostedShopsPage() {
     const hosted = getHostedShellSnapshot();
     if (!hosted.summary) return renderHostedPageUnavailable("shops");
@@ -5883,6 +5960,7 @@ export default function App() {
   }
 
   function renderMarket() {
+    if (activeGameMode === "hosted" && hostedRoundState.summary) return renderHostedMarketPage();
     const ownedSelected = player.minerals[marketMineral] || 0;
     return <Panel title="Market">
       <p className="mb-3 text-orange-200">Create mineral sell orders, buy partial quantities from other players, or cancel your own listings.</p>
@@ -7368,6 +7446,7 @@ export default function App() {
       if (page === "science") return renderScience();
       if (page === "bank") return renderBank();
       if (page === "shops") return renderShops();
+      if (page === "market") return renderMarket();
       if (page === "todo") return renderHostedDiagnosticsPanel();
       return renderHostedPageUnavailable(page);
     }
