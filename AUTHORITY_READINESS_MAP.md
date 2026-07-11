@@ -287,6 +287,56 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   client `normaliseHostedRoundSummary` had dropped `minerals`, so a bought
   mineral read 0 after refresh despite correct server state.
 
+## 3j. Slice 9 status (Market/Shops sub-slice 6b: listings table + List/Cancel) — done
+
+- Second Market sub-slice: the round-scoped order book plus the two self-only
+  actions that write it (List, Cancel). **Buy — the cross-player money transfer
+  — is explicitly NOT here; that is 6c**, reviewed separately for cross-player
+  financial risk.
+- **Listings table** (`multiplayer_market_listings`) is round-scoped shared
+  state, NOT a per-player K/V table: every player reads the same rows. Fields:
+  id, round_id, seller_player_id, mineral_key, quantity, price, status,
+  created_at. Schema in 001 + 006_add_market_listings_table.sql (MUST be applied
+  to production before this code deploys — same 003/004/005 ordering hazard; 005
+  confirmed applied via read-only enter probe, 006 pending same treatment).
+- **List** (/api/dev/actions/market-list), ported from createMarketSellOrder
+  (src/App.jsx): grant-resolved seller identity (canonical, never client-claimed);
+  price ceiling = DEV_SHOP_PRICES[mineral] server-enforced hard cap; ownership
+  checked against the seller's canonical minerals row. Escrow: insert the listing
+  first, then the guarded minerals debit — on any debit failure the listing is
+  deleted (compensation), so a listing failure never leaves minerals debited with
+  no listing. Rejections: invalid_mineral / invalid_amount / invalid_price /
+  price_above_shop_cap / insufficient_minerals.
+- **Cancel** (/api/dev/actions/market-cancel): own listings only, ownership
+  derived server-side from the grant-resolved player and rejected
+  (403 not_your_listing) otherwise — never trusts a client claim. Un-escrow:
+  mark cancelled first, then credit minerals back; on credit failure the listing
+  is re-activated (compensation), preventing duplication. Rejections:
+  invalid_listing / listing_not_found / not_your_listing.
+- True single-statement atomicity needs a transaction/RPC (deferred to 6c where
+  the cross-player money move lives); the insert-first / cancel-first orderings
+  structurally guarantee the safe direction (no lost minerals, no duplication).
+- Read model: active listings threaded through readDevRoundSummary, the enter
+  payload, canonicalState, and the enter-handler whitelist via formatMarketListing
+  (exposes the shared order book so the future Buy UI has something to render).
+- Client: hosted Market page (guarded renderMarket → renderHostedMarketPage,
+  added to the hosted allowlist) — Create Sell Order form with Fill Owned / Shop
+  Price fills, order book with Cancel on own listings and NO Buy (other rows show
+  "Buy unavailable"). Local Market path untouched.
+- **Whitelist-drop footgun fixed permanently**: `normaliseHostedRoundSummary` is
+  now pass-through (spreads the server payload, then re-applies coercions), so new
+  server fields survive automatically — this is the third occurrence class (after
+  science c94e0eb and minerals) and the last, since fields no longer need to be
+  re-listed. Verified no regression: buildings/armies/science/minerals still read
+  through, marketListings survives, unknown future fields pass through.
+- Verified: escrow atomicity in BOTH failure directions via DB fault injection
+  (List debit fail → listing compensated, no lost minerals; Cancel credit fail →
+  listing re-activated, no duplication); cancel un-escrow + 403 reject of another
+  player's listing; price-cap / ownership / identityless rejects; browser
+  walkthrough (list 30 Arthok → order book, stock 100→70 → cancel → stock 70→100,
+  no Buy button, no console errors); autosave-leak clean (no hosted state in
+  localStorage); local Market page still renders in local mode.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
