@@ -293,6 +293,7 @@ app.post('/api/dev/hosted-round/enter', requireDevEndpoints, async (req, res) =>
       buildings: result.buildings,
       armies: result.armies,
       science: result.science,
+      minerals: result.minerals,
       factoryCount: result.factoryCount,
       queuedCount: result.queuedCount,
       processedCount: result.processedCount,
@@ -1197,6 +1198,32 @@ function scienceLevelsFromRows(rows = []) {
   return levels;
 }
 
+// ── Shops / minerals reference port ───────────────────────────────────────────
+// The 15 minerals and fixed shop prices, verbatim from src/gameData.js
+// (mineralOrder, shopPrices). Food/Water/Energy are shop-sold too but live as
+// state columns, not mineral rows. This sub-slice (6a) covers minerals state +
+// the fixed-price shop only; the player-to-player Market (list/buy/cancel) is
+// out of scope.
+const DEV_MINERAL_KEYS = ['Aldora', 'Antoria', 'Armidi', 'Arthok', 'Chrophat', 'Ciber', 'Endaurios', 'Feronga', 'Hitera', 'Nerwhil', 'Ontigro', 'Phorfirum', 'Positronium', 'Sophitor', 'Tyron'];
+const DEV_SHOP_PRICES = (() => {
+  const prices = Object.fromEntries(DEV_MINERAL_KEYS.map((m) => [m, 33333]));
+  return Object.assign(prices, { Arthok: 61107, Phorfirum: 10069, Tyron: 58406, Chrophat: 55789, Feronga: 39688, Armidi: 11000, Endaurios: 65000, Food: 40, Water: 2, Energy: 3333 });
+})();
+// Food/Water/Energy map to state columns; every other shop item is a mineral row.
+const DEV_SHOP_STATE_COLUMN = { Food: 'food', Water: 'water', Energy: 'energy' };
+
+// Extract a { mineral: count } map from mineral rows (raw snake_case or formatted).
+function mineralCountsFromRows(rows = []) {
+  const counts = Object.fromEntries(DEV_MINERAL_KEYS.map((m) => [m, 0]));
+  for (const row of rows) {
+    const key = row.mineral_key ?? row.mineralKey ?? row.mineral;
+    if (key && Object.prototype.hasOwnProperty.call(counts, key)) {
+      counts[key] = Math.max(0, Math.floor(Number(row.count ?? 0)));
+    }
+  }
+  return counts;
+}
+
 // ── Economy reference port ────────────────────────────────────────────────────
 // Faithful port of the local prototype's per-tick economy formulas:
 //   applyEconomyTickPure, calcCaps, supportedPopulationCap, productionPerTick,
@@ -1481,6 +1508,7 @@ async function seedDevRound(seedInput) {
   const buildings = await getOrCreatePlayerBuildings(round.row.id, player.row.id);
   const armies = await getOrCreatePlayerArmies(round.row.id, player.row.id);
   const science = await getOrCreatePlayerScience(round.row.id, player.row.id);
+  const minerals = await getOrCreatePlayerMinerals(round.row.id, player.row.id);
   const event = await getOrCreateDevEvent(round.row.id, player.row.id, seedInput);
   const audit = await getOrCreateDevAudit(round.row.id, player.row.id, seedInput);
 
@@ -1555,6 +1583,13 @@ async function readDevRoundSummary(roundKey) {
         (query) => query.eq('round_id', round.id).in('player_id', playerIds)
       )
     : [];
+  const minerals = playerIds.length > 0
+    ? await fetchRows(
+        'multiplayer_player_minerals',
+        'id, player_id, round_id, mineral_key, count, created_at, updated_at',
+        (query) => query.eq('round_id', round.id).in('player_id', playerIds)
+      )
+    : [];
   const latestResetEvent = await fetchSingleRow(
     'multiplayer_round_events',
     'id, round_id, tick, event_type, visibility, actor_player_id, target_player_id, alliance_id, title, body, payload, created_at',
@@ -1586,6 +1621,7 @@ async function readDevRoundSummary(roundKey) {
   const buildingsByPlayerId = groupRowsByKey(buildings, 'player_id');
   const armiesByPlayerId = groupRowsByKey(armies, 'player_id');
   const scienceByPlayerId = groupRowsByKey(science, 'player_id');
+  const mineralsByPlayerId = groupRowsByKey(minerals, 'player_id');
   const accessLinkByPlayerId = new Map(activeAccessLinks.map((link) => [link.player_id, link]));
   const actionsByPlayerId = groupRowsByKey(visibleActionRows, 'player_id');
   const canonicalActionRows = accessLinkByPlayerId.size > 0
@@ -1613,6 +1649,7 @@ async function readDevRoundSummary(roundKey) {
       buildings: formatBuildingRows(buildingsByPlayerId.get(player.id) || []),
       armies: formatArmyRows(armiesByPlayerId.get(player.id) || []),
       science: formatScienceRows(scienceByPlayerId.get(player.id) || []),
+      minerals: formatMineralRows(mineralsByPlayerId.get(player.id) || []),
       factoryCount: canonicalCountFromRows((buildingsByPlayerId.get(player.id) || []).filter((row) => row.building_key === 'factory')),
     }))
     .sort((left, right) => {
@@ -1685,6 +1722,7 @@ async function readHostedRoundEntryState(hostedInput) {
   const currentPlayerBuildings = normalizeHostedBuildingSummary(currentPlayer?.buildings || []);
   const currentPlayerArmies = normalizeHostedArmySummary(currentPlayer?.armies || []);
   const currentPlayerScience = normalizeHostedScienceSummary(currentPlayer?.science || []);
+  const currentPlayerMinerals = normalizeHostedMineralSummary(currentPlayer?.minerals || []);
   const currentPlayerFactoryCount = Math.max(0, Math.floor(Number(currentPlayerBuildings.counts.factory || 0)));
   const currentPlayerQueuedCount = Math.max(0, Math.floor(Number(actionSummary.queued + actionSummary.processing || 0)));
   const currentPlayerProcessedCount = Math.max(0, Math.floor(Number(actionSummary.processed || 0)));
@@ -1723,6 +1761,7 @@ async function readHostedRoundEntryState(hostedInput) {
     buildings: currentPlayerBuildings,
     armies: currentPlayerArmies,
     science: currentPlayerScience,
+    minerals: currentPlayerMinerals,
     factoryCount: currentPlayerFactoryCount,
     queuedCount: currentPlayerQueuedCount,
     processedCount: currentPlayerProcessedCount,
@@ -1751,6 +1790,7 @@ async function readHostedRoundEntryState(hostedInput) {
       buildings: currentPlayerBuildings,
       armies: currentPlayerArmies,
       science: currentPlayerScience,
+      minerals: currentPlayerMinerals,
       actionSummary: {
         total: actionSummary.total,
         queued: actionSummary.queued + actionSummary.processing,
@@ -2561,6 +2601,7 @@ async function queueDevScienceAction(actionInput) {
 
   // Duration depends on the field's CURRENT level (research targets currentLevel + 1).
   await getOrCreatePlayerScience(round.id, player.id);
+  await getOrCreatePlayerMinerals(round.id, player.id);
   const scienceRows = await fetchRows(
     'multiplayer_player_science',
     'id, player_id, round_id, science_key, level, created_at, updated_at',
@@ -2675,6 +2716,7 @@ async function loadBankContext(round, player) {
   );
   const banksCount = canonicalCountFromRows(bankRows);
   await getOrCreatePlayerScience(round.id, player.id);
+  await getOrCreatePlayerMinerals(round.id, player.id);
   const scienceRows = await fetchRows(
     'multiplayer_player_science',
     'id, player_id, round_id, science_key, level, created_at, updated_at',
@@ -3365,6 +3407,17 @@ async function resetDevProofRound(resetInput) {
         updated_at: resetAt,
       }, 'player_id,round_id,science_key');
     }
+
+    // Reset every mineral stockpile back to 0.
+    for (const mineral of DEV_MINERAL_KEYS) {
+      await upsertRow('multiplayer_player_minerals', {
+        round_id: round.id,
+        player_id: currentPlayer.id,
+        mineral_key: mineral,
+        count: 0,
+        updated_at: resetAt,
+      }, 'player_id,round_id,mineral_key');
+    }
   }
 
   const queuedActions = await fetchRows(
@@ -3585,6 +3638,7 @@ async function resolvePlayerFromGrant(grantId, roundKey, identityInput = {}) {
   await getOrCreatePlayerBuildings(round.id, player.id);
   await getOrCreatePlayerArmies(round.id, player.id);
   await getOrCreatePlayerScience(round.id, player.id);
+  await getOrCreatePlayerMinerals(round.id, player.id);
 
   const touchedAt = nowIso();
   await updateSingleRow('multiplayer_players', {
@@ -3676,6 +3730,7 @@ async function resolveDevPlayerIdentity(identityInput, options = {}) {
   await getOrCreatePlayerBuildings(round.id, player.id);
   await getOrCreatePlayerArmies(round.id, player.id);
   await getOrCreatePlayerScience(round.id, player.id);
+  await getOrCreatePlayerMinerals(round.id, player.id);
 
   const touchedAt = nowIso();
   await updateSingleRow('multiplayer_players', {
@@ -4066,6 +4121,31 @@ async function getOrCreatePlayerScience(roundId, playerId) {
   };
 }
 
+async function getOrCreatePlayerMinerals(roundId, playerId) {
+  // One row per mineral (count 0), mirroring the science/buildings row pattern.
+  // Only missing rows are created so existing stockpiles are never overwritten.
+  const existing = await fetchRows('multiplayer_player_minerals', 'id, player_id, round_id, mineral_key, count, created_at, updated_at', (query) =>
+    query.eq('round_id', roundId).eq('player_id', playerId)
+  );
+  const existingKeys = new Set(existing.map((row) => row.mineral_key));
+  const missingRows = DEV_MINERAL_KEYS.filter((mineral) => !existingKeys.has(mineral));
+
+  await Promise.all(
+    missingRows.map((mineral) =>
+      insertSingleRow('multiplayer_player_minerals', {
+        round_id: roundId,
+        player_id: playerId,
+        mineral_key: mineral,
+        count: 0,
+      })
+    )
+  );
+
+  return {
+    created: missingRows.length > 0,
+  };
+}
+
 async function getOrCreateDevEvent(roundId, playerId, seedInput) {
   const existing = await fetchSingleRow('multiplayer_round_events', 'id, round_id, tick, event_type, visibility, title, body, payload, created_at', (query) =>
     query.eq('round_id', roundId).eq('event_type', DEV_SEED_EVENT_TYPE)
@@ -4272,6 +4352,25 @@ function normalizeHostedScienceSummary(rows = []) {
     fields: DEV_SCIENCE_FIELDS.map((field) => ({ scienceKey: field, level: levels[field] })),
     byKey,
     levels,
+  };
+}
+
+function formatMineralRows(rows) {
+  return rows.map((row) => ({
+    id: row.id,
+    mineralKey: row.mineral_key,
+    count: row.count,
+  }));
+}
+
+function normalizeHostedMineralSummary(rows = []) {
+  const counts = mineralCountsFromRows(rows);
+  const byKey = Object.fromEntries(DEV_MINERAL_KEYS.map((mineral) => [mineral, { count: counts[mineral] }]));
+  return {
+    rows: formatMineralRows(rows),
+    minerals: DEV_MINERAL_KEYS.map((mineral) => ({ mineralKey: mineral, count: counts[mineral] })),
+    byKey,
+    counts,
   };
 }
 
