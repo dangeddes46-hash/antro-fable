@@ -261,6 +261,32 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   `004_add_player_science_table.sql` to the production Supabase. Both are now in
   the repo; 001 skeleton includes them for fresh installs.
 
+## 3i. Slice 8 status (Market/Shops sub-slice 6a: minerals state + Shops) — done
+
+- First groundwork of the first player-to-player roadmap item, but this sub-slice
+  is deliberately self-only: minerals state + the fixed-price Shop. Market
+  (list/buy/cancel, the order book, the cross-player atomic buy) is 6b/6c, NOT
+  started here.
+- **Minerals K/V table** (`multiplayer_player_minerals`, 15 rows/player) mirrors
+  the buildings/armies/science pattern exactly: getOrCreate seeds/creates only
+  missing rows, reset returns all to 0, threaded through readDevRoundSummary,
+  the enter path (minerals.byKey/counts), canonicalState, and the enter-handler
+  whitelist. Schema in 001 + 005_add_player_minerals_table.sql (MUST be applied
+  to production before this code deploys — same 003/004 ordering hazard).
+- **Shops** is instant and self-only, ported from buyShopMinerals (src/App.jsx):
+  /api/dev/actions/shop-buy (item + qty, grant identity), fixed DEV_SHOP_PRICES
+  cited verbatim from gameData.js. Debits money, credits the item —
+  Food/Water/Energy to state columns, minerals to the K/V row. Rejections:
+  item_not_sold / invalid_amount / insufficient_funds. No completion mechanism
+  (Bank's shape), no screen-map entry.
+- Verified: 9 shop prices spot-checked incl. overrides (Arthok 61,107 /
+  Endaurios 65,000 / Feronga 39,688 / Armidi 11,000) and defaults (33,333) and
+  Food/Water/Energy (40/2/3,333); mineral + food credit with exact money debit;
+  all rejections; browser buy (money 1,000,000 → 694,465, Arthok stockpile → 5).
+- Whitelist-drop bug fixed in passing (same class as science c94e0eb): the
+  client `normaliseHostedRoundSummary` had dropped `minerals`, so a bought
+  mineral read 0 after refresh despite correct server state.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
