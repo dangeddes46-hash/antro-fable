@@ -38,6 +38,10 @@ export const HOSTED_SHOP_BUY_ENDPOINT = "/api/dev/actions/shop-buy";
 // cross-player money transfer) is NOT here — that is sub-slice 6c.
 export const HOSTED_MARKET_LIST_ENDPOINT = "/api/dev/actions/market-list";
 export const HOSTED_MARKET_CANCEL_ENDPOINT = "/api/dev/actions/market-cancel";
+// Buy is the cross-player money transfer (6c). The whole exchange runs inside
+// one row-locked Postgres transaction on the game service; the client only
+// names a listing and a quantity — buyer identity comes from the grant.
+export const HOSTED_MARKET_BUY_ENDPOINT = "/api/dev/actions/market-buy";
 // Orders finish after a real duration (in round ticks) but only apply when the
 // player visits the matching screen; the visit calls this endpoint.
 export const HOSTED_COMPLETE_DUE_ENDPOINT = "/api/dev/actions/complete-due";
@@ -207,6 +211,9 @@ export function multiplayerDevActionFailureMessage(status, errorCode, playerLabe
   if (errorCode === "not_your_listing") return "You can only cancel your own market listings.";
   if (errorCode === "market_list_failed") return "The market listing could not be created.";
   if (errorCode === "market_cancel_failed") return "The market listing could not be cancelled.";
+  if (errorCode === "cannot_buy_own_listing") return "You cannot buy your own market listing.";
+  if (errorCode === "market_buy_failed") return "The market purchase could not be completed.";
+  if (errorCode === "seller_state_not_found") return "The purchase was rolled back because the seller state was missing.";
   if (errorCode === "complete_due_failed") return "Finished orders could not be completed.";
   if (errorCode === "round_not_found") return "Shared Multiplayer DEV round has not been seeded yet.";
   if (errorCode === "player_not_found") return `${playerLabel} was not found in the shared round.`;

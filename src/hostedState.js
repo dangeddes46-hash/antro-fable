@@ -122,6 +122,15 @@ export function buildMarketCancelBody({ hostedSummary, testerAccessRecord, listi
     listingId,
   };
 }
+// Market Buy names a listing and a quantity only. Buyer identity is resolved
+// server-side from the grant; self-buy is rejected inside the transaction.
+export function buildMarketBuyBody({ hostedSummary, testerAccessRecord, listingId, quantity }) {
+  return {
+    ...buildHostedRoundRequestBody({ hostedSummary, testerAccessRecord }),
+    listingId,
+    quantity,
+  };
+}
 // Seven research fields from the hosted science summary, with the reference
 // labels and a display-only next-level duration (scienceDurationSeconds,
 // src/gameMath.js — quadratic in currentLevel+1 over the lab curve). The server

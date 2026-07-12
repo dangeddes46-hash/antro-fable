@@ -15,9 +15,9 @@ import { GAME_TOTAL_TICKS, GAME_TOTAL_GAME_MS, accountRounds, speciesTraits, SAV
 import { REPORT_WORDING_MODE, REPORT_WORDING_MODES, REPORT_WORDING_MODE_NOTES, normaliseReportTextMode, reportOpeningLine, reportTurretDisabledLine, reportTurretNoEnergyLine, reportTurretFireLine, reportUnitExchangeLine, reportPlayerSummaryLine, reportBotSummaryLine, reportProtectionExperienceLine, transformClassicReportTextForMode } from "./reportWording.js";
 import { TRYSAUR_WAR_DRUM_MAX_USES, speciesBonusesEnabled, raceKeyForEntity, normaliseSpeciesProgress, humanConstructionSpeedMultiplier, trysaurWarDrumProgress, trainingSpeedDivider, lithiTrainCapMultiplierForRow, effectiveMaxTrainForRow, effectiveMaxTrainByRow, reluReviveMultiplier, zarthMiningMultiplier, completedSpeedTrainCounter, shouldAwardTrysaurWarDrums, awardCompletedTrysaurWarDrums } from "./speciesBonuses.js";
 import { fmt, safeDisplay, compactFmt, parseQty, TEXT_LIMITS, cleanSingleLineText, cleanMultiLineText, cleanStoredName, clampTextInput, clampPercentInput, allocationIsValid, emptyBuildings, emptyMinerals, emptyBuildForm, scienceLevelBonus, sciencePercent, totalBuildings, reservedBuildLand, totalEmpireLand, buildCost, constructionFactoryMultiplier, constructionDurationSeconds, normaliseBuildSpeedFactor, buildSpeedMultiplier, speedFactorBuildCost, speedFactorBuildSeconds, barracksTrainingMultiplier, trainingDurationSeconds, SCIENCE_TICK_SECONDS, SCIENCE_IG_TARGET_TICKS, scienceLabMultiplier, scienceDurationSeconds, armyPower, publicPowerForEmpire, stackNames } from "./gameMath.js";
-import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_SHOP_BUY_ENDPOINT, HOSTED_MARKET_LIST_ENDPOINT, HOSTED_MARKET_CANCEL_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
+import { INVITE_TOKEN_SERVICE_URL, INVITE_TOKEN_SERVICE_HOST, GAME_SERVICE_URL, MULTIPLAYER_PREVIEW_ROUND_KEY, HOSTED_QUEUE_BUILD_ENDPOINT, HOSTED_QUEUE_TRAIN_ENDPOINT, HOSTED_QUEUE_EXPLORE_ENDPOINT, HOSTED_QUEUE_SCIENCE_ENDPOINT, HOSTED_BANK_DEPOSIT_ENDPOINT, HOSTED_BANK_WITHDRAW_ENDPOINT, HOSTED_SHOP_BUY_ENDPOINT, HOSTED_MARKET_LIST_ENDPOINT, HOSTED_MARKET_CANCEL_ENDPOINT, HOSTED_MARKET_BUY_ENDPOINT, HOSTED_COMPLETE_DUE_ENDPOINT, hostedScienceLabel, hostedBuildingLabel, fetchGameServiceHealth, fetchDevRoundSummary, postHostedRoundEnter, postResolvePlayerIdentity, postDevAction, postInviteTokenRedeem, makeInviteTokenClientNonce, inviteTokenFailureMessage, maskStableIdentifier, hostedGameServiceFailureMessage, multiplayerPreviewFailureMessage, multiplayerIdentityFailureMessage, multiplayerDevActionFailureMessage, hostedRoundFailureMessage } from "./hostedApi.js";
 import { safeParseSave, safeLoadStorageKey, safeLoadSave, safeWriteStorageKey, safeWriteSave, safeDeleteStorageKey, safeLoadRoundSlot, safeWriteRoundSlot, safeReadRoundSlotIndex, safeWriteRoundSlotIndex, upsertRoundSlotIndexEntry, safeDeleteRoundSlot, normaliseAccessGrant, safeLoadTesterAccess, safeWriteTesterAccess, safeClearTesterAccess, testerAccessRecordForCode, testerAccessModeLabel } from "./localSaveStore.js";
-import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, buildShopBuyBody, buildMarketListBody, buildMarketCancelBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
+import { buildIdentityFallbackSummary, buildIdentityRequestBody, buildHostedRoundRequestBody, buildQueueBuildOrderBody, buildQueueTrainOrderBody, buildCompleteDueBody, buildQueueExploreBody, hostedExploreEstimate, buildQueueScienceBody, buildBankActionBody, buildShopBuyBody, buildMarketListBody, buildMarketCancelBody, buildMarketBuyBody, normaliseHealthSummary, normalisePreviewSummary, normaliseHostedRoundSummary, normaliseIdentitySummary, buildHostedShellSnapshot } from "./hostedState.js";
 
 const navItems = [
   { originalLabel: "Alliances", key: "alliances" }, { originalLabel: "Bank", key: "bank" }, { originalLabel: "Barracks", key: "barracks" }, { originalLabel: "Disband", key: "disband" }, { originalLabel: "Battle Log", key: "battlelog" }, { originalLabel: "Bonus", key: "bonus" }, { originalLabel: "Build", key: "build" }, { originalLabel: "Destroy", key: "destroy" }, { originalLabel: "Explore", key: "explore" }, { originalLabel: "Factories", key: "factories" }, { originalLabel: "Market", key: "market" }, { originalLabel: "Messages", key: "messages" }, { originalLabel: "Missiles", key: "missiles" }, { originalLabel: "Mines", key: "mines" }, { originalLabel: "News", key: "news" }, { originalLabel: "Online", key: "online" }, { originalLabel: "Rankings", key: "rankings" }, { originalLabel: "Science Labs", key: "science" }, { originalLabel: "Search", key: "search" }, { originalLabel: "Shops", key: "shops" }, { originalLabel: "Spy Center", key: "spy" }, { originalLabel: "Status", key: "status" }, { originalLabel: "To Do", key: "todo" }, { originalLabel: "War", key: "war" },
@@ -1528,6 +1528,7 @@ export default function App() {
   const [hostedMarketMineral, setHostedMarketMineral] = useState("Arthok");
   const [hostedMarketQty, setHostedMarketQty] = useState("");
   const [hostedMarketPrice, setHostedMarketPrice] = useState("");
+  const [hostedMarketBuyQty, setHostedMarketBuyQty] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [displayModel, setDisplayModel] = useState(DISPLAY_MODEL_DEFAULT);
   const [glwSeedMode, setGlwSeedMode] = useState("late");
@@ -2681,6 +2682,16 @@ export default function App() {
       actionType: "hosted_market_cancel",
       requestBody: buildMarketCancelBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, listingId }),
       successMessage: "Market listing cancelled for hosted round.",
+      onSuccessRefresh: hostedRoundRefreshAfterAction,
+    });
+  }
+  async function submitHostedDevMarketBuy(listingId) {
+    const quantity = Math.floor(Number(hostedMarketBuyQty) || 0);
+    return submitMultiplayerDevAction({
+      endpointPath: HOSTED_MARKET_BUY_ENDPOINT,
+      actionType: "hosted_market_buy",
+      requestBody: buildMarketBuyBody({ hostedSummary: hostedRoundState.summary, testerAccessRecord, listingId, quantity }),
+      successMessage: "Market purchase completed for hosted round.",
       onSuccessRefresh: hostedRoundRefreshAfterAction,
     });
   }
@@ -5428,7 +5439,7 @@ export default function App() {
     const validationNote = selectedQty <= 0 ? "Enter a quantity to list" : notEnough ? "Not enough of that mineral" : selectedPrice <= 0 ? "Enter a price each" : priceOverCap ? `Price cannot exceed shop cost (${fmt(priceCap)})` : "OK";
     return <div className="grid gap-4">
       <Panel title="Market">
-        <p className="mb-3 text-orange-200">Hosted DEV Market lists minerals into a shared, round-scoped order book. Listing escrows the minerals out of your stockpile until you cancel. Buying from other players is not enabled in this build.</p>
+        <p className="mb-3 text-orange-200">Hosted DEV Market lists minerals into a shared, round-scoped order book. Listing escrows the minerals out of your stockpile until you cancel. Buying from another player moves your money to them and their escrowed minerals to you in a single server-side transaction.</p>
         <OldTable rows={[
           ["Mode", "Hosted DEV Round"],
           ["Current browser identity", hosted.playerLabel],
@@ -5450,9 +5461,17 @@ export default function App() {
           </div>
           <p className="text-xs text-orange-500">Current stock: {fmt(ownedSelected)} {mineralLabel(hostedMarketMineral)}. Shop price cap: {fmt(priceCap)} each. Validation: {validationNote}</p>
         </Panel>
-        <table className="w-full text-sm mt-4"><thead><tr className="text-orange-300 bg-[#240B02]"><th className="text-left p-1">Seller</th><th className="text-left p-1">Mineral</th><th className="text-right p-1">Quantity</th><th className="text-right p-1">Price Each</th><th className="text-right p-1">Action</th></tr></thead><tbody>{listings.length ? listings.map((o) => {
+        <div className="flex gap-2 flex-wrap items-center mt-4 mb-1">
+          <span className="text-xs text-orange-300">Buy quantity:</span>
+          <TextInput value={hostedMarketBuyQty} onChange={(v) => setHostedMarketBuyQty(String(Math.max(0, Math.floor(Number(v) || 0))))} className="w-28" placeholder="Buy qty" />
+          <span className="text-xs text-orange-500">Money on hand: {fmt(Math.max(0, Math.floor(hosted.money)))}. Requests above a listing's quantity are filled with what remains.</span>
+        </div>
+        <table className="w-full text-sm mt-2"><thead><tr className="text-orange-300 bg-[#240B02]"><th className="text-left p-1">Seller</th><th className="text-left p-1">Mineral</th><th className="text-right p-1">Quantity</th><th className="text-right p-1">Price Each</th><th className="text-right p-1">Action</th></tr></thead><tbody>{listings.length ? listings.map((o) => {
           const isMine = o.sellerPlayerId === hosted.playerId;
-          return <tr key={o.id} className="border-b border-orange-950"><td className="p-1">{o.sellerDisplayName || "Unknown"}{isMine ? " (you)" : ""}</td><td className="p-1">{mineralLabel(o.mineralKey)}</td><td className="p-1 text-right">{fmt(o.quantity)}</td><td className="p-1 text-right">{fmt(o.price)}</td><td className="p-1 text-right">{isMine ? <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevMarketCancel(o.id)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>Cancel</button> : <span className="text-xs text-orange-600">Buy unavailable</span>}</td></tr>;
+          const buyQty = Math.max(0, Math.floor(Number(hostedMarketBuyQty) || 0));
+          const buyCost = Math.min(buyQty, Math.floor(Number(o.quantity) || 0)) * Math.floor(Number(o.price) || 0);
+          const buyDisabled = hostedRoundState.loading || multiplayerDevActionState.loading || !hosted.playerId || buyQty <= 0 || buyCost > Math.floor(hosted.money);
+          return <tr key={o.id} className="border-b border-orange-950"><td className="p-1">{o.sellerDisplayName || "Unknown"}{isMine ? " (you)" : ""}</td><td className="p-1">{mineralLabel(o.mineralKey)}</td><td className="p-1 text-right">{fmt(o.quantity)}</td><td className="p-1 text-right">{fmt(o.price)}</td><td className="p-1 text-right">{isMine ? <button className="classic-btn antro-action-btn" onClick={() => submitHostedDevMarketCancel(o.id)} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>Cancel</button> : <span className="inline-flex gap-1 items-center"><button className="classic-btn antro-action-btn" onClick={() => setHostedMarketBuyQty(String(Math.max(0, Math.floor(Number(o.quantity) || 0))))} disabled={hostedRoundState.loading || multiplayerDevActionState.loading}>Fill</button><button className="classic-btn antro-action-btn" onClick={() => submitHostedDevMarketBuy(o.id)} disabled={buyDisabled}>{multiplayerDevActionState.loading && multiplayerDevActionState.lastActionType === "hosted_market_buy" ? "Buying..." : `Buy${buyQty > 0 ? ` (${fmt(buyCost)})` : ""}`}</button></span>}</td></tr>;
         }) : <tr><td className="p-2 text-orange-600" colSpan={5}>No active market listings.</td></tr>}</tbody></table>
         {hostedRoundState.error ? <div className="mt-3 border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">{hostedRoundState.error}</div> : null}
         {hostedRoundState.message ? <div className="mt-3 border border-green-900 bg-green-950/35 p-3 text-sm text-green-200">{hostedRoundState.message}</div> : null}
