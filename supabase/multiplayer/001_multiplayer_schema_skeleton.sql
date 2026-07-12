@@ -489,3 +489,153 @@ comment on table public.multiplayer_missile_log is 'Game history log for missile
 create index if not exists idx_multiplayer_missile_log_round_status on public.multiplayer_missile_log (round_id, status);
 create index if not exists idx_multiplayer_missile_log_firing_player_id on public.multiplayer_missile_log (firing_player_id);
 create index if not exists idx_multiplayer_missile_log_target_player_id on public.multiplayer_missile_log (target_player_id);
+
+-- ---------------------------------------------------------------------------
+-- SQL functions (mirrored from 007_market_buy_function.sql; fresh installs get
+-- them here, existing databases apply 007). See 007 for the full rationale.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.multiplayer_market_buy(
+  p_round_id uuid,
+  p_listing_id uuid,
+  p_buyer_player_id uuid,
+  p_quantity numeric
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_listing public.multiplayer_market_listings%rowtype;
+  v_qty numeric;
+  v_cost numeric;
+  v_rows integer;
+  v_remaining numeric;
+  v_status text;
+begin
+  if p_quantity is null or p_quantity <= 0 or p_quantity <> floor(p_quantity) then
+    raise exception 'invalid_amount';
+  end if;
+
+  select * into v_listing
+  from public.multiplayer_market_listings
+  where id = p_listing_id
+    and round_id = p_round_id
+  for update;
+
+  if not found then
+    raise exception 'listing_not_found';
+  end if;
+  if v_listing.status <> 'active' then
+    raise exception 'listing_not_found';
+  end if;
+  if v_listing.seller_player_id = p_buyer_player_id then
+    raise exception 'cannot_buy_own_listing';
+  end if;
+  if v_listing.quantity <= 0 then
+    raise exception 'listing_not_found';
+  end if;
+  if v_listing.price <= 0 then
+    raise exception 'invalid_price';
+  end if;
+
+  v_qty := least(p_quantity, v_listing.quantity);
+  v_cost := v_qty * v_listing.price;
+
+  update public.multiplayer_player_state
+     set money = money - v_cost,
+         state_version = state_version + 1,
+         updated_at = now()
+   where round_id = p_round_id
+     and player_id = p_buyer_player_id
+     and money >= v_cost;
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    perform 1 from public.multiplayer_player_state
+      where round_id = p_round_id and player_id = p_buyer_player_id;
+    if not found then
+      raise exception 'player_not_found';
+    end if;
+    raise exception 'insufficient_funds';
+  end if;
+
+  update public.multiplayer_player_state
+     set money = money + v_cost,
+         state_version = state_version + 1,
+         updated_at = now()
+   where round_id = p_round_id
+     and player_id = v_listing.seller_player_id;
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    raise exception 'seller_state_not_found';
+  end if;
+
+  insert into public.multiplayer_player_minerals (player_id, round_id, mineral_key, count, updated_at)
+  values (p_buyer_player_id, p_round_id, v_listing.mineral_key, v_qty, now())
+  on conflict (player_id, round_id, mineral_key)
+  do update set count = public.multiplayer_player_minerals.count + excluded.count,
+                updated_at = now();
+
+  v_remaining := v_listing.quantity - v_qty;
+  if v_remaining <= 0 then
+    v_status := 'sold';
+    update public.multiplayer_market_listings
+       set quantity = 0,
+           status = 'sold',
+           updated_at = now()
+     where id = v_listing.id;
+  else
+    v_status := 'active';
+    update public.multiplayer_market_listings
+       set quantity = v_remaining,
+           updated_at = now()
+     where id = v_listing.id;
+  end if;
+
+  return jsonb_build_object(
+    'listing_id', v_listing.id,
+    'seller_player_id', v_listing.seller_player_id,
+    'mineral_key', v_listing.mineral_key,
+    'quantity_bought', v_qty,
+    'price', v_listing.price,
+    'cost', v_cost,
+    'remaining_quantity', greatest(v_remaining, 0),
+    'listing_status', v_status
+  );
+end;
+$$;
+
+comment on function public.multiplayer_market_buy(uuid, uuid, uuid, numeric) is
+  'Atomic cross-player market purchase: row-locks the listing (FOR UPDATE), verifies active/not-own/affordable, moves money between buyer and seller as atomic increments, credits the buyer the escrowed minerals, decrements or closes the listing. All-or-nothing; any failure rolls back every step.';
+
+create or replace function public.multiplayer_apply_economy_tick_state(
+  p_state_id uuid,
+  p_money_delta numeric,
+  p_population numeric,
+  p_banked numeric,
+  p_food numeric,
+  p_water numeric,
+  p_energy numeric,
+  p_tick integer
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.multiplayer_player_state
+     set money = money + p_money_delta,
+         population = p_population,
+         banked = p_banked,
+         food = p_food,
+         water = p_water,
+         energy = p_energy,
+         tick = p_tick,
+         state_version = state_version + 1,
+         updated_at = now()
+   where id = p_state_id;
+end;
+$$;
+
+comment on function public.multiplayer_apply_economy_tick_state(uuid, numeric, numeric, numeric, numeric, numeric, numeric, integer) is
+  'Applies one economy tick to a player state row with money as an atomic delta (money = money + p_money_delta) so concurrent money movements (e.g. market buys) are never lost to the tick''s read-modify-write window.';

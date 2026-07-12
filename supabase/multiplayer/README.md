@@ -20,16 +20,25 @@ This folder contains draft Supabase SQL and review notes for the future server-a
 - `004_add_player_science_table.sql` - incremental: creates multiplayer_player_science
 - `005_add_player_minerals_table.sql` - incremental: creates multiplayer_player_minerals
 - `006_add_market_listings_table.sql` - incremental: creates multiplayer_market_listings
+- `007_market_buy_function.sql` - incremental: multiplayer_market_buy RPC + multiplayer_apply_economy_tick_state (atomic money movements)
 - `RLS_SECURITY_NOTES.md` - access and policy notes for future review
 
 ## Migration ordering / deploy note
 
 The v0.43.x game-service reads columns and tables that must exist before the
 service is deployed against a database. Apply the incremental migrations
-(003, 004, 005, 006) to any database created from an earlier skeleton, or the
-round-summary and hosted-round reads will fail (e.g. `column
+(003, 004, 005, 006, 007) to any database created from an earlier skeleton, or
+the round-summary and hosted-round reads will fail (e.g. `column
 multiplayer_player_state.banked does not exist`). Fresh installs from 001 already
 include them.
+
+**007 is load-bearing for the economy tick, not just Market Buy.** From
+game-service v0.43.3 onward, every manual economy tick calls
+`multiplayer_apply_economy_tick_state`, and every Market Buy calls
+`multiplayer_market_buy`. Deploying a v0.43.3+ service against a database
+without 007 breaks ticking for the whole round. Apply 007 BEFORE deploying;
+the functions are inert until the new service calls them, so applying early is
+safe.
 
 ## Notes
 
