@@ -348,6 +348,11 @@ app.get('/api/dev/round-summary', requireDevEndpoints, async (req, res) => {
       ok: true,
       round: summary.round,
       players: summary.players,
+      // Shared order book included so read-only production probes can confirm
+      // the listings table + read model end-to-end (this handler's field list
+      // silently dropped it in v0.43.2/3 — same whitelist footgun as the 6b
+      // client normaliser).
+      marketListings: summary.marketListings,
       recentEvents: summary.recentEvents,
       recentPublicEvents: summary.recentPublicEvents,
       recentActions: summary.recentActions,
