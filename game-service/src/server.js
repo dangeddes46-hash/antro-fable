@@ -13,7 +13,9 @@ const LOCAL_ENV_PATH = path.resolve(__dirname, '..', '.env');
 const LOCAL_ENV_LOADED = loadLocalEnv(LOCAL_ENV_PATH);
 
 const SERVICE_NAME = 'antrophai-game-service';
-const SERVICE_VERSION = 'v0.43.2';
+// v0.43.3: Market Buy (6c) + tick money-delta write. REQUIRES migration 007
+// applied first — the economy tick itself calls a 007 function.
+const SERVICE_VERSION = 'v0.43.3';
 const GAME_SERVICE_ENV = process.env.GAME_SERVICE_ENV || 'local';
 const PORT = Number(process.env.PORT || 8790);
 const RAW_ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '');
@@ -753,6 +755,37 @@ app.post('/api/dev/actions/market-cancel', requireDevEndpoints, async (req, res)
   }
 });
 
+app.post('/api/dev/actions/market-buy', requireDevEndpoints, async (req, res) => {
+  try {
+    if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
+      res.status(503).json({
+        ok: false,
+        service: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        environment: GAME_SERVICE_ENV,
+        error: 'supabase_not_configured',
+        message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using the dev market-buy endpoint.',
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const actionInput = normalizeDevMarketBuyInput(req.body || {});
+    const result = await marketBuyAction(actionInput);
+
+    res.status(200).json({
+      ok: true,
+      action: { type: 'dev_market_buy', listingId: result.listingId, mineral: result.mineral, quantity: result.qty, price: result.price, cost: result.cost, remainingQuantity: result.remainingQuantity, listingStatus: result.listingStatus },
+      round: { roundKey: result.round.round_key, currentTick: Number(result.round.current_tick || 0) },
+      player: { displayName: result.player.display_name },
+      message: `Bought ${result.qty} ${result.mineral} from ${result.sellerName} for ${result.cost}.`,
+      timestamp: nowIso(),
+    });
+  } catch (error) {
+    sendErrorResponse(res, error, 'market_buy_failed');
+  }
+});
+
 app.post('/api/dev/actions/complete-due', requireDevEndpoints, async (req, res) => {
   try {
     if (!SUPABASE_CONFIGURED || !SUPABASE_CLIENT) {
@@ -1219,6 +1252,20 @@ function normalizeDevMarketCancelInput(body) {
     throw createServiceError(400, 'invalid_listing', 'Provide a listingId to cancel.');
   }
   return { ...identity, listingId };
+}
+
+function normalizeDevMarketBuyInput(body) {
+  const identity = normalizeDevIdentityInput(body);
+  const listingId = normalizeText(String(body.listingId ?? body.listing_id ?? body.id ?? ''));
+  if (!listingId) {
+    throw createServiceError(400, 'invalid_listing', 'Provide a listingId to buy from.');
+  }
+  const rawQty = body.quantity ?? body.qty ?? body.amount;
+  const qty = typeof rawQty === 'number' ? rawQty : Number(String(rawQty ?? '').trim());
+  if (!Number.isInteger(qty) || qty <= 0) {
+    throw createServiceError(400, 'invalid_amount', 'Buy quantity must be a positive whole number.');
+  }
+  return { ...identity, listingId, qty };
 }
 
 function normalizeDevManualTickInput(body) {
@@ -3227,6 +3274,88 @@ async function marketCancelAction(actionInput) {
   return { round, player, listingId: listing.id, mineral, qty };
 }
 
+// Instant Market Buy — port of buyMarketOrder (src/App.jsx), the first
+// cross-player money transfer. The entire financial exchange happens inside
+// the multiplayer_market_buy Postgres function (migration 007) as ONE
+// transaction: FOR UPDATE listing lock (no double-fill), affordability fused
+// into the buyer debit, seller credit as the exact same amount, escrowed
+// minerals handed to the buyer, listing decremented/closed. Any failure rolls
+// the whole transaction back — this code never sequences partial writes.
+//
+// Buyer identity is the grant-resolved canonical player id; the client never
+// supplies it. Self-buy is rejected inside the transaction by comparing that
+// resolved id against the listing's seller_player_id.
+//
+// Reference semantics preserved: requested quantity clamps to what the
+// listing still holds (partial fill, not a reject); a price above the shop
+// cap cannot occur because List enforces the cap at creation.
+async function marketBuyAction(actionInput) {
+  const identity = await resolveDevPlayerIdentity(actionInput, { requireGrant: true });
+  const { round, player } = identity;
+
+  let result;
+  try {
+    result = await callRpc('multiplayer_market_buy', {
+      p_round_id: round.id,
+      p_listing_id: actionInput.listingId,
+      p_buyer_player_id: player.id,
+      p_quantity: actionInput.qty,
+    });
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (message.includes('listing_not_found')) {
+      throw createServiceError(404, 'listing_not_found', 'That market listing was not found or is no longer active.');
+    }
+    if (message.includes('cannot_buy_own_listing')) {
+      throw createServiceError(403, 'cannot_buy_own_listing', 'You cannot buy your own market listing.');
+    }
+    if (message.includes('insufficient_funds')) {
+      throw createServiceError(400, 'insufficient_funds', 'You cannot afford that purchase.');
+    }
+    if (message.includes('invalid_amount')) {
+      throw createServiceError(400, 'invalid_amount', 'Buy quantity must be a positive whole number.');
+    }
+    if (message.includes('player_not_found')) {
+      throw createServiceError(404, 'player_not_found', 'Your player state was not found in the shared round.');
+    }
+    if (message.includes('seller_state_not_found')) {
+      throw createServiceError(500, 'seller_state_not_found', 'The seller state row is missing; the purchase was rolled back.');
+    }
+    throw error;
+  }
+
+  const mineral = result?.mineral_key;
+  const qty = Number(result?.quantity_bought || 0);
+  const price = Number(result?.price || 0);
+  const cost = Number(result?.cost || 0);
+  const sellerPlayerId = result?.seller_player_id || null;
+  const sellerRow = sellerPlayerId
+    ? await fetchSingleRow('multiplayer_players', 'id, display_name, tester_label', (query) => query.eq('id', sellerPlayerId)).catch(() => null)
+    : null;
+  const sellerName = sellerRow?.display_name || 'another player';
+
+  await insertSingleRow('multiplayer_round_events', {
+    round_id: round.id,
+    tick: Number(round.current_tick || 0),
+    event_type: 'dev_market_buy',
+    visibility: 'public',
+    actor_player_id: player.id,
+    target_player_id: sellerPlayerId,
+    title: 'Market purchase',
+    body: `${player.display_name} bought ${qty} ${mineral} from ${sellerName} for ${cost}.`,
+    payload: { actionType: 'dev_market_buy', listingId: result?.listing_id, mineral, quantity: qty, price, cost, remainingQuantity: Number(result?.remaining_quantity || 0), listingStatus: result?.listing_status },
+  }).catch(() => {});
+  await insertSingleRow('multiplayer_audit_log', {
+    round_id: round.id,
+    player_id: player.id,
+    actor_type: 'dev',
+    event_type: 'dev_market_buy',
+    event_data: { round_id: round.id, round_key: round.round_key, buyer_player_id: player.id, buyer_display_name: player.display_name, seller_player_id: sellerPlayerId, listing_id: result?.listing_id, mineral, quantity: qty, price, cost, remaining_quantity: Number(result?.remaining_quantity || 0), listing_status: result?.listing_status },
+  }).catch(() => {});
+
+  return { round, player, listingId: result?.listing_id, mineral, qty, price, cost, sellerName, remainingQuantity: Number(result?.remaining_quantity || 0), listingStatus: result?.listing_status };
+}
+
 async function runManualDevTick(tickInput) {
   const round = await fetchSingleRow('multiplayer_rounds', 'id, round_key, round_name, status, current_tick, created_at, updated_at, notes', (query) =>
     query.eq('round_key', tickInput.roundKey)
@@ -3716,17 +3845,23 @@ async function applyEconomyTickForRound(round, nextTick) {
     );
 
     const next = computeEconomyTick(stateRow, buildingRows, armyRows, scienceLevelsFromRows(scienceRows));
-    await updateSingleRow('multiplayer_player_state', {
-      population: next.population,
-      money: next.money,
-      banked: next.banked,
-      food: next.food,
-      water: next.water,
-      energy: next.energy,
-      tick: nextTick,
-      state_version: Number(stateRow.state_version || 0) + 1,
-      updated_at: nowIso(),
-    }, (query) => query.eq('id', stateRow.id));
+    // Money is written as a DELTA via the 007 SQL function (money = money +
+    // delta), not as the absolute value computed above. A market buy (or any
+    // other money movement) that commits between this function's state read
+    // and this write would otherwise be silently erased by an absolute write.
+    // The delta equals the tick's income exactly because computeEconomyTick
+    // derives next.money from stateRow.money (income terms depend on
+    // population/banked/science, none of which a market buy touches).
+    await callRpc('multiplayer_apply_economy_tick_state', {
+      p_state_id: stateRow.id,
+      p_money_delta: Number(next.money) - Number(stateRow.money || 0),
+      p_population: next.population,
+      p_banked: next.banked,
+      p_food: next.food,
+      p_water: next.water,
+      p_energy: next.energy,
+      p_tick: nextTick,
+    });
     playersProcessed += 1;
   }
 
@@ -4681,6 +4816,19 @@ async function deleteRows(tableName, filterFn) {
   if (error) {
     throw Object.assign(new Error(error.message), { code: error.code || 'supabase_delete_failed' });
   }
+}
+
+// Calls a Postgres function (a single atomic transaction server-side; any
+// RAISE inside rolls back every statement). Errors raised in the function
+// surface here with error.message === the RAISE text.
+async function callRpc(functionName, params) {
+  const { data, error } = await SUPABASE_CLIENT.rpc(functionName, params);
+
+  if (error) {
+    throw Object.assign(new Error(error.message), { code: error.code || 'supabase_rpc_failed', rpcFunction: functionName });
+  }
+
+  return data;
 }
 
 function getDevSeedMarker(seedInput) {
