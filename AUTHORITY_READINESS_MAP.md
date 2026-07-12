@@ -337,6 +337,59 @@ localStorage directly (deliberately untouched — DEV diagnostics preserved).
   no Buy button, no console errors); autosave-leak clean (no hosted state in
   localStorage); local Market page still renders in local mode.
 
+## 3k. Slice 10 status (Market sub-slice 6c: Buy — cross-player money) — done
+
+- The final Market piece and the first REAL cross-player financial transaction.
+  Per the agreed Option A: the entire exchange is a row-locked Postgres function
+  (`multiplayer_market_buy`, migration **007_market_buy_function.sql**), not
+  application-level sequenced writes. One plpgsql body = one transaction:
+  SELECT ... FOR UPDATE on the listing serialises concurrent buys (double-fill
+  is impossible, not just unlikely); the buyer debit fuses the affordability
+  check into the UPDATE's WHERE and moves money as an atomic increment
+  expression (money = money - cost); the seller credit is the exact same amount
+  (conservation by construction); the buyer receives the escrowed minerals via
+  ON CONFLICT upsert; the listing decrements or closes (status 'sold'). Any
+  RAISE rolls back every step — no partial state is reachable. Reference
+  semantics preserved (buyMarketOrder, src/App.jsx): requested quantity clamps
+  to what the listing holds (partial fill), self-buy rejected against the
+  grant-resolved buyer id (403 cannot_buy_own_listing) — never a client claim.
+- **Tick lost-update window closed**: the economy tick previously wrote money
+  as an absolute value computed from an earlier read, so a buy committing
+  inside the read→write window would have been silently erased. 007 also adds
+  `multiplayer_apply_economy_tick_state`; the tick now passes its income as a
+  DELTA (money = money + delta) and both writes land in either commit order.
+  **Consequence: from v0.43.3 the tick itself requires 007 — deploying the
+  service before the migration breaks ticking for the whole round, not just
+  Buy.** SERVICE_VERSION bumped to v0.43.3 so prod probes can distinguish
+  builds (the 6b probe ambiguity came from an unbumped version string).
+- Endpoint /api/dev/actions/market-buy (instant, grant identity); error map:
+  listing_not_found 404 / cannot_buy_own_listing 403 / insufficient_funds 400 /
+  invalid_amount 400 / seller_state_not_found 500 (rolled back).
+- Client: Buy controls on the hosted Market page for non-own listings only
+  (shared buy-qty input, per-row Fill + Buy with live cost preview); own rows
+  keep Cancel. Client sends listingId + quantity only. marketListings flowed
+  through the 6b pass-through normaliser with zero whitelist edits.
+- Verified (mock harness implements the 007 functions with checks-before-
+  mutations rollback semantics + one-shot param-matched delay injection):
+  37/37 — partial fill exact amounts; clamp full-fill closes listing; self-buy
+  rejected with zero mutation; insufficient funds zero mutation; identityless/
+  ghost-listing rejects; concurrent-buy race (Promise.all, two buyers, one
+  10-unit listing → exactly one winner, 10 units delivered, 100000 paid,
+  seller credited once); buy-vs-tick race (tick write for the target player
+  delayed 600ms, buy committed inside the window → money = before + 1200 tick
+  income + 150000 sale, NO lost update); money conservation asserted in every
+  phase. Regressions: 6b market 18/18, fault-injection 7/7, economy fidelity
+  134/134 through the new tick RPC path. Browser walkthrough as two distinct
+  grant identities (localStorage access-record swap): Seller lists 40@20000
+  (stock 100→60), Other sees Fill/Buy (no Cancel), buys 15 → money
+  1,000,000→700,000, stock 0→15, listing 40→25; swap back: Seller money
+  1,000,000→1,300,000, stock still 60, listing 25 with Cancel; sum conserved;
+  zero console errors; autosave-leak clean (no hosted state in localStorage).
+- **PENDING PRODUCTION STEPS, IN THIS ORDER: apply 006, apply 007, then deploy
+  the v0.43.3 game-service.** Production still runs the pre-6b build (probe:
+  no marketListings key in the round summary), so 006 could not be confirmed
+  via read-only probe and 007 is certainly unapplied.
+
 ## 4. Recommended migration order (next slices, one at a time)
 
 Each slice = move one gameplay action's authority to the game-service, render it
