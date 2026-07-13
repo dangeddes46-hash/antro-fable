@@ -4782,6 +4782,7 @@ export default function App() {
     return <div className="border-t border-red-900 mt-3 pt-3">
       <div className="border border-red-700 bg-[#120000] p-2">
         <div className="text-red-300 font-bold text-xs mb-2 tracking-wide">Prototype / Admin Tools</div>
+        <div className="text-[10px] text-red-300 mb-2 leading-snug">Local prototype state only — these write the browser-local save, not the hosted DEV round. For hosted testing, use the DEV proof panel's actions (Enter round, Shops buy, Bank, manual tick).</div>
         <div className="grid gap-1">
           <button className="admin-btn" onClick={() => adminAddCards(50000000)}>+50m Cards</button>
           <button className="admin-btn" onClick={() => setPlayer((p) => ({ ...p, missiles: Math.min(missileCapacityForBuildings(p.buildings || {}), (p.missiles || 0) + 50) }))}>+50 missiles</button>
@@ -4893,14 +4894,17 @@ export default function App() {
   }
 
   function renderHostedPageUnavailable(pageKey) {
-    return <Panel title={`Hosted ${pageLabel(pageKey) || pageKey || "Page"}`}>
-      <p className="text-orange-200 mb-3">This hosted DEV shell does not expose the {pageLabel(pageKey) || pageKey || "selected"} page yet. Use Status, Build, or the DEV diagnostics panel.</p>
-      <div className="flex gap-2 flex-wrap">
-        <button className="classic-btn antro-action-btn" onClick={() => setPage("status")}>Go to Status</button>
-        <button className="classic-btn antro-action-btn" onClick={() => setPage("build")}>Go to Build</button>
-        <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen(true)}>Open DEV proof panel / diagnostics</button>
-      </div>
-    </Panel>;
+    return <div className="grid gap-4">
+      <Panel title={`Hosted ${pageLabel(pageKey) || pageKey || "Page"}`}>
+        <p className="text-orange-200 mb-3">This hosted DEV shell does not expose the {pageLabel(pageKey) || pageKey || "selected"} page yet. Use Status, Build, or the DEV diagnostics panel.</p>
+        <div className="flex gap-2 flex-wrap">
+          <button className="classic-btn antro-action-btn" onClick={() => setPage("status")}>Go to Status</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setPage("build")}>Go to Build</button>
+          <button className="classic-btn antro-action-btn" onClick={() => setHostedDiagnosticsOpen((value) => !value)}>{hostedDiagnosticsOpen ? "Hide DEV proof panel / diagnostics" : "Open DEV proof panel / diagnostics"}</button>
+        </div>
+      </Panel>
+      {hostedDiagnosticsOpen ? renderHostedDiagnosticsPanel() : null}
+    </div>;
   }
 
   const renderSharedMultiplayerPreviewPanel = () => {
@@ -4921,6 +4925,27 @@ export default function App() {
     const hostedPlayerState = hostedSummary?.playerState || null;
     const hostedBuildings = hostedSummary?.buildings || null;
     const hostedArmies = hostedSummary?.armies || null;
+    const hostedMinerals = hostedSummary?.minerals || null;
+    const hostedScience = hostedSummary?.science || null;
+    const hostedBanked = hostedPlayerState ? Math.max(0, Math.floor(Number(hostedPlayerState.banked || 0))) : 0;
+    // Exact (non-compact) money + full mineral/science inventory so a tester can
+    // read the screen and know what they can afford, list, or buy without guessing.
+    const hostedMineralCounts = hostedMinerals?.counts || hostedMinerals?.byKey || {};
+    const hostedMineralInventoryLabel = (() => {
+      const parts = mineralOrder
+        .map((m) => [m, Math.max(0, Math.floor(Number(hostedMineralCounts?.[m]?.count ?? hostedMineralCounts?.[m] ?? 0)))])
+        .filter(([, count]) => count > 0)
+        .map(([m, count]) => `${mineralLabel(m)} ${fmt(count)}`);
+      return parts.length ? parts.join(" · ") : "None held";
+    })();
+    const hostedScienceInventoryLabel = (() => {
+      const levels = hostedScience?.levels && typeof hostedScience.levels === "object" ? hostedScience.levels : {};
+      const parts = Object.entries(levels)
+        .map(([field, level]) => [field, Math.max(0, Math.floor(Number(level || 0)))])
+        .filter(([, level]) => level > 0)
+        .map(([field, level]) => `${hostedScienceLabel(field)} ${fmt(level)}`);
+      return parts.length ? parts.join(" · ") : "All fields level 0";
+    })();
     const hostedActionSummary = hostedSummary?.actionSummary || null;
     const hostedOtherPlayers = Array.isArray(hostedSummary?.otherPlayers) ? hostedSummary.otherPlayers : [];
     const hostedRoundSummary = hostedSummary?.roundSummary || null;
@@ -5171,10 +5196,13 @@ export default function App() {
           ["State version", hostedPlayerState?.stateVersion ?? "—"],
           ["Land", hostedPlayerState ? fmt(Number(hostedPlayerState.land || 0)) : "—"],
           ["Power", hostedPlayerState ? compactFmt(Number(hostedPlayerState.power || 0)) : "—"],
-          ["Money", hostedPlayerState ? compactFmt(Number(hostedPlayerState.money || 0)) : "—"],
+          ["Money (on hand)", hostedPlayerState ? fmt(Math.max(0, Math.floor(Number(hostedPlayerState.money || 0)))) : "—"],
+          ["Money (banked)", hostedPlayerState ? fmt(hostedBanked) : "—"],
+          ["Minerals held", hostedPlayerState ? hostedMineralInventoryLabel : "—"],
+          ["Science levels", hostedPlayerState ? hostedScienceInventoryLabel : "—"],
           ["Buildings", `Factories ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.factory ?? 0))))} · Barracks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.barracks ?? 0))))} · Banks ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.bank ?? 0))))} · Science labs ${fmt(Math.max(0, Math.floor(Number(hostedBuildings?.counts?.scienceLabs ?? 0))))}`],
           ["Armies", `Infantry ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.infantry ?? 0))))} · Defense ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.defense ?? 0))))} · Training ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.training ?? 0))))} · Returning ${fmt(Math.max(0, Math.floor(Number(hostedArmies?.counts?.returning ?? 0))))}`],
-        ], "Loaded directly from the hosted game-service so the player view stays canonical.")}
+        ], "Loaded directly from the hosted game-service so the player view stays canonical. Money and minerals are exact (not abbreviated) for testing.")}
         {renderStatusCard("Other Players", hostedOtherPlayers.length ? hostedOtherPlayers.map((player, index) => [`Player ${index + 1}`, `${player.displayName || "Unknown player"}${player.testerLabel ? ` / ${player.testerLabel}` : ""} · Factories ${fmt(Math.max(0, Math.floor(Number(player.factoryCount ?? 0))))} · Queued ${fmt(Math.max(0, Math.floor(Number(player.queuedCount ?? 0))))} · Processed ${fmt(Math.max(0, Math.floor(Number(player.processedCount ?? 0))))} · Tick ${player.currentTick ?? "—"}`]) : [["Other players", "No other hosted players are visible yet."]], "Compact public summaries only.")}
       </div>}
       <p className="text-xs text-orange-600 mt-3">Hosted actions still call the existing DEV endpoints for now, but the round view itself is sourced from the server so the player state is canonical.</p>
